@@ -47,9 +47,23 @@ jobs:
 
     - name: Build
       run: mvn install -DskipTests=true -Dgpg.skip -B -V
+    
+    - name: Install Spice (https://install.spiceai.org)
+      run: |
+        curl https://install.spiceai.org | /bin/bash
+        echo "$HOME/.spice/bin" >> $GITHUB_PATH
+
+    - name: Init and start spice app
+      run: |
+        spice init spice_qs
+        cd spice_qs
+        spice add spiceai/quickstart
+        spice run &> spice.log &
+        # time to initialize added dataset
+        sleep 10
 
     - name: Test
       run: mvn test -B
       env:
-          API_KEY: ${{ secrets.SPICE_CLOUD_API_KEY }}
+        API_KEY: ${{ secrets.SPICE_CLOUD_API_KEY }}
   

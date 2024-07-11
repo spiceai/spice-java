@@ -37,6 +37,9 @@ import org.apache.arrow.flight.grpc.CredentialCallOption;
 
 import org.apache.arrow.flight.FlightInfo;
 import org.apache.arrow.memory.RootAllocator;
+
+import com.google.common.base.Strings;
+
 import org.apache.arrow.flight.sql.FlightSqlClient;
 
 /**
@@ -82,10 +85,9 @@ public class SpiceClient {
 
         Builder builder = FlightClient.builder(new RootAllocator(Long.MAX_VALUE), new Location(this.flightAddress));
 
-        if (apiKey == null) {
+        if (Strings.isNullOrEmpty(apiKey)) {
             this.flightClient = new FlightSqlClient(builder.build());
             return;
-
         }
 
         final ClientIncomingAuthHeaderMiddleware.Factory factory = new ClientIncomingAuthHeaderMiddleware.Factory(
@@ -104,8 +106,8 @@ public class SpiceClient {
      * @return a FlightStream with the query results
      */
     public FlightStream query(String sql) {
-        if (sql == null || sql.isEmpty()) {
-            throw new IllegalArgumentException("No SQL provided");
+        if (Strings.isNullOrEmpty(sql)) {
+            throw new IllegalArgumentException("No SQL query provided");
         }
 
         FlightInfo flightInfo = this.flightClient.execute(sql, authCallOptions);

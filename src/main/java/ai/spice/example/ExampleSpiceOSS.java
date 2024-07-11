@@ -27,23 +27,19 @@ import org.apache.arrow.flight.FlightStream;
 import ai.spice.SpiceClient;
 
 /**
- * Example of using Spice.ai client to query data from Spice.ai Cloud
- * mvn exec:java -Dexec.mainClass="ai.spice.example.Example"
+ * Example of using SDK with Spice.ai OSS (Local)
+ * mvn exec:java -Dexec.mainClass="ai.spice.example.ExampleSpiceOSS"
+ * 
+ * Requires local Spice OSS running. Follow the quickstart https://github.com/spiceai/spiceai?tab=readme-ov-file#%EF%B8%8F-quickstart-local-machine.
  */
-public class Example {
-
-    // Create free Spice.ai account to obtain API_KEY: https://spice.ai/login
-    final static String API_KEY = "api-key";
+public class ExampleSpiceOSS {
 
     public static void main(String[] args) {
         try {
             SpiceClient client = SpiceClient.builder()
-                    .withApiKey(API_KEY)
-                    .withSpiceCloud()
                     .build();
 
-            String sql = "SELECT * FROM eth.recent_blocks LIMIT 10;";
-            FlightStream res = client.query(sql);
+            FlightStream res = client.query("SELECT * FROM taxi_trips limit 10;");
 
             while (res.next()) {
                 System.out.println(res.getRoot().contentToTSVString());

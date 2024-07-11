@@ -43,6 +43,8 @@ This library supports the following Java implementations:
 
 ### With locally running [Spice runtime](https://github.com/spiceai/spiceai)
 
+Requires local Spice OSS running: [follow the quickstart]( https://github.com/spiceai/spiceai?tab=readme-ov-file#%EF%B8%8F-quickstart-local-machine)
+
 ```java
 import org.apache.arrow.flight.FlightStream;
 import ai.spice.SpiceClient;
@@ -51,8 +53,6 @@ public class Example {
 
     public static void main(String[] args) {
         SpiceClient client = SpiceClient.builder()
-            .withApiKey(API_KEY)
-            .withSpiceCloud()
             .build();
 
         FlightStream res = client.query("SELECT * FROM taxi_trips;");
@@ -65,15 +65,15 @@ public class Example {
 
 ```
 
-### With <https://spice.ai> Cloud
+### With [Spice.ai Cloud Platform](https://spice.ai)
+
+Create [free Spice.ai account](https://spice.ai/login) to obtain API_KEY
 
 ```java
 import org.apache.arrow.flight.FlightStream;
 import ai.spice.SpiceClient;
 
 public class Example {
-
-    // Create free Spice.ai account to obtain API_KEY: https://spice.ai/login
     final static String API_KEY = "api-key";
 
     public static void main(String[] args) {

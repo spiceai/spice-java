@@ -27,30 +27,26 @@ import java.util.concurrent.ExecutionException;
 import org.apache.arrow.flight.FlightStream;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
+import com.google.common.base.Strings;
+
 import junit.framework.TestCase;
 
 public class FlightQueryTest 
     extends TestCase
 {
-    private SpiceClient spiceClient;
-
-    @Override
-    protected void setUp() throws Exception {
-        super.setUp();
-        String apiKey = System.getenv("API_KEY");
-
-        if (apiKey == null  || apiKey.isEmpty()) {
-            throw new IllegalArgumentException("No API_KEY provided");
-        }
-
-        spiceClient = SpiceClient.builder()
-                .withApiKey(apiKey)
-                .withSpiceCloud()
-                .build();
-    }
-
-    public void testQuery() throws ExecutionException, InterruptedException {
+    public void testQuerySpiceCloudPlatform() throws ExecutionException, InterruptedException {
         try {
+            String apiKey = System.getenv("API_KEY");
+
+            if (Strings.isNullOrEmpty(apiKey)) {
+                throw new IllegalArgumentException("No API_KEY provided");
+            }
+
+            SpiceClient spiceClient = SpiceClient.builder()
+                    .withApiKey(apiKey)
+                    .withSpiceCloud()
+                    .build();
+
             String sql = "SELECT number, \"timestamp\", base_fee_per_gas, base_fee_per_gas / 1e9 AS base_fee_per_gas_gwei FROM eth.blocks limit 2000";
             FlightStream res = spiceClient.query(sql);
 
@@ -67,6 +63,33 @@ public class FlightQueryTest
 
             assertEquals("Expected column count does not match", 4, columnCount);
             assertEquals("Expected row count does not match", 2000, totalRows);
+
+        } catch (Exception e) {
+            fail("Should not throw any exception: " + e.getMessage());
+        }
+    }
+
+    public void testQuerySpiceOSS() throws ExecutionException, InterruptedException {
+        try {
+            SpiceClient spiceClient = SpiceClient.builder()
+                    .build();
+
+            String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 10;";
+            FlightStream res = spiceClient.query(sql);
+
+            int totalRows = 0;
+            int columnCount = 0;
+
+            while (res.next()) {
+                VectorSchemaRoot root = res.getRoot();
+                if (totalRows == 0) {
+                    columnCount = root.getFieldVectors().size();
+                }
+                totalRows += root.getRowCount();
+            }
+
+            assertEquals("Expected column count does not match", 3, columnCount);
+            assertEquals("Expected row count does not match", 10, totalRows);
 
         } catch (Exception e) {
             fail("Should not throw any exception: " + e.getMessage());
