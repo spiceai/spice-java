@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Debug Example",
+            "request": "launch",
+            "mainClass": "spiceai.example.Example",
+            "projectName": "spiceai",
+            // https://arrow.apache.org/docs/java/install.html#java-compatibility
+            "env": {
+                "_JAVA_OPTIONS": "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            }
+        }
+    ]
+}
