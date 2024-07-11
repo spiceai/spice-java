@@ -51,9 +51,10 @@ public class SpiceClient {
     private CredentialCallOption authCallOptions = null;
 
     /**
-     * Returns a new instance of SpiceClientBuilder.
+     * Returns a new instance of SpiceClientBuilder
      *
-     * @return A new SpiceClientBuilder instance.
+     * @return A new SpiceClientBuilder instance
+     * @throws URISyntaxException if there is an error in constructing the URI
      */
     public static SpiceClientBuilder builder() throws URISyntaxException {
         return new SpiceClientBuilder();
@@ -61,7 +62,10 @@ public class SpiceClient {
 
     /**
      * Constructs a new SpiceClient instance with the specified parameters
-     */
+    * @param appId        the application ID used to identify the client application
+    * @param apiKey       the API key used for authentication with Spice.ai services
+    * @param flightAddress the URI of the flight address for connecting to Spice.ai services
+    */
     public SpiceClient(String appId, String apiKey, URI flightAddress) {
         this.appId = appId;
         this.apiKey = apiKey;
@@ -98,7 +102,6 @@ public class SpiceClient {
      *
      * @param sql the SQL query to execute
      * @return a FlightStream with the query results
-     * @throws Exception if an error occurs during the query execution
      */
     public FlightStream query(String sql) {
         if (sql == null || sql.isEmpty()) {

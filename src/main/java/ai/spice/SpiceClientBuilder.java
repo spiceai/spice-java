@@ -46,7 +46,7 @@ public class SpiceClientBuilder {
     /**
      * Sets the client's flight address
      * 
-     * @param flightAddress
+     * @param flightAddress The URI of the flight address
      * @return The current instance of SpiceClientBuilder for method chaining.
      */
     public SpiceClientBuilder withFlightAddress(URI flightAddress) {
@@ -76,7 +76,7 @@ public class SpiceClientBuilder {
      * Sets the client's flight address to default Spice Cloud address.
      *
      * @return The current instance of SpiceClientBuilder for method chaining.
-     * @throws URISyntaxException
+     * @throws URISyntaxException Thrown when the URI syntax is incorrect.
      */
     public SpiceClientBuilder withSpiceCloud() throws URISyntaxException {
         this.flightAddress = Config.getCloudFlightAddressUri();

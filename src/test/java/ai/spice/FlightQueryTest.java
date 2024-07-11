@@ -39,7 +39,7 @@ public class FlightQueryTest
         super.setUp();
         String apiKey = System.getenv("API_KEY");
 
-        if (apiKey == null) {
+        if (apiKey == null  || apiKey.isEmpty()) {
             throw new IllegalArgumentException("No API_KEY provided");
         }
 

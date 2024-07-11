@@ -26,7 +26,10 @@ import org.apache.arrow.flight.FlightStream;
 
 import ai.spice.SpiceClient;
 
-// mvn exec:java -Dexec.mainClass="ai.spice.example.Example"
+/**
+ * Example of using Spice.ai client to query data from Spice.ai Cloud
+ * mvn exec:java -Dexec.mainClass="ai.spice.example.Example"
+ */
 public class Example {
 
     // Create free Spice.ai account to obtain API_KEY: https://spice.ai/login

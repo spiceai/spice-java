@@ -25,9 +25,14 @@ package ai.spice;
 import java.net.URI;
 import java.net.URISyntaxException;
 
+/**
+ * Provides default configuration for Spice client.
+ */
 public class Config {
 
+    /** Cloud flight address */
     public static final String CLOUD_FLIGHT_ADDRESS;
+    /** Local flight address */
     public static final String LOCAL_FLIGHT_ADDRESS;
 
     static {

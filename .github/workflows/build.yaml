@@ -1,0 +1,55 @@
+name: build
+
+on:
+  push:
+    branches: ['trunk']
+  pull_request:
+    branches: ['trunk']
+  workflow_dispatch:
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        java:
+          - version: 17
+            distribution: microsoft # OpenJDK build by Microsoft
+          - version: 21
+            distribution: microsoft # OpenJDK build by Microsoft
+          - version: 17
+            distribution: oracle
+          - version: 21
+            distribution: oracle
+          - version: 22
+            distribution: oracle
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up JDK ${{ matrix.java.version }} ({{ matrix.java.distribution }})
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ matrix.java.version }}
+        distribution: ${{ matrix.java.distribution }}
+
+    - name: Display Java version
+      run: java -version
+
+    - name: Display Javac version
+      run: javac -version
+
+    - name: Display Maven version
+      run: mvn -version
+
+    - name: Build
+      run: mvn install -DskipTests=true -Dgpg.skip -B -V
+
+    - name: Test
+      run: mvn test -B
+      env:
+          API_KEY: ${{ secrets.SPICE_CLOUD_API_KEY }}
+  
