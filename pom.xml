@@ -14,6 +14,12 @@
         <url>http://www.apache.org/licenses/LICENSE-2.0</url>
     </license>
   </licenses>
+  <scm>
+    <url>git@github.com:spiceai/spice-java.git</url>
+    <connection>scm:git:git@github.com:spiceai/spiceai-java.git</connection>
+    <developerConnection>scm:git:git@github.com:spiceai/spiceai-java.git</developerConnection>
+    <!-- <tag>0.1.0</tag> -->
+  </scm>
   <properties>
       <maven.compiler.source>17</maven.compiler.source>
       <maven.compiler.target>17</maven.compiler.target>
@@ -42,10 +48,9 @@
     </dependency>
   </dependencies>
 
-  <!-- https://arrow.apache.org/docs/java/install.html#java-compatibility -->
-
   <build>
     <plugins>
+      <!-- https://arrow.apache.org/docs/java/install.html#java-compatibility -->
         <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-surefire-plugin</artifactId>
@@ -53,6 +58,46 @@
             <configuration>
               <argLine>--add-opens=java.base/java.nio=ALL-UNNAMED</argLine>
             </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-source-plugin</artifactId>
+          <version>3.3.0</version>
+            <executions>
+                <execution>
+                    <id>attach-sources</id>
+                    <goals>
+                        <goal>jar-no-fork</goal>
+                    </goals>
+                </execution>
+            </executions>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-javadoc-plugin</artifactId>
+          <version>3.6.3</version>
+            <executions>
+                <execution>
+                    <id>attach-javadocs</id>
+                    <goals>
+                        <goal>jar</goal>
+                    </goals>
+                </execution>
+            </executions>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-gpg-plugin</artifactId>
+          <version>3.2.1</version>
+            <executions>
+                <execution>
+                    <id>sign-artifacts</id>
+                    <phase>verify</phase>
+                    <goals>
+                        <goal>sign</goal>
+                    </goals>
+                </execution>
+            </executions>
         </plugin>
     </plugins>
 </build>
