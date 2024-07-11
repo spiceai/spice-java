@@ -20,13 +20,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-package spiceai.example;
+package ai.spice.example;
 
 import org.apache.arrow.flight.FlightStream;
 
-import spiceai.SpiceClient;
+import ai.spice.SpiceClient;
 
-//  _JAVA_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED" mvn exec:java -Dexec.mainClass="spiceai.example.Example"
+// mvn exec:java -Dexec.mainClass="ai.spice.example.Example"
 public class Example {
 
     // Create free Spice.ai account to obtain API_KEY: https://spice.ai/login

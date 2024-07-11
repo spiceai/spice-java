@@ -10,7 +10,7 @@ Add the following dependency in your Maven project:
 
 ```xml
 <dependency>
-  <groupId>spiceai</groupId>
+  <groupId>ai.spice</groupId>
   <artifactId>spiceai</artifactId>
   <version>0.1.0</version>
   <scope>compile</scope>
@@ -45,7 +45,7 @@ This library supports the following Java implementations:
 
 ```java
 import org.apache.arrow.flight.FlightStream;
-import spiceai.SpiceClient;
+import ai.spice.SpiceClient;
 
 public class Example {
 
@@ -69,7 +69,7 @@ public class Example {
 
 ```java
 import org.apache.arrow.flight.FlightStream;
-import spiceai.SpiceClient;
+import ai.spice.SpiceClient;
 
 public class Example {
 
