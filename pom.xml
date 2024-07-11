@@ -4,7 +4,7 @@
   <groupId>spiceai</groupId>
   <artifactId>spiceai</artifactId>
   <packaging>jar</packaging>
-  <version>1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
   <name>Java Spice SDK</name>
   <url>http://maven.apache.org</url>
   <description>Spice provides a unified SQL query interface and portable runtime to locally materialize, accelerate, and query datasets from any database, data warehouse, or data lake.</description>
