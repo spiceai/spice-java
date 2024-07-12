@@ -28,7 +28,7 @@ import ai.spice.SpiceClient;
 
 /**
  * Example of using Spice.ai client to query data from Spice.ai Cloud
- * mvn exec:java -Dexec.mainClass="ai.spice.example.Example"
+ * mvn exec:java -Dexec.mainClass="ai.spice.example.ExampleSpiceCloudPlatform"
  */
 public class ExampleSpiceCloudPlatform {
 

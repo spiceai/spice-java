@@ -3,9 +3,20 @@
     "configurations": [
         {
             "type": "java",
-            "name": "Debug Example",
+            "name": "Debug ExampleSpiceCloudPlatform",
             "request": "launch",
-            "mainClass": "spiceai.example.Example",
+            "mainClass": "ai.spice.example.ExampleSpiceCloudPlatform",
+            "projectName": "spiceai",
+            // https://arrow.apache.org/docs/java/install.html#java-compatibility
+            "env": {
+                "_JAVA_OPTIONS": "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            }
+        },
+        {
+            "type": "java",
+            "name": "Debug ExampleSpiceOSS",
+            "request": "launch",
+            "mainClass": "ai.spice.example.ExampleSpiceOSS",
             "projectName": "spiceai",
             // https://arrow.apache.org/docs/java/install.html#java-compatibility
             "env": {
