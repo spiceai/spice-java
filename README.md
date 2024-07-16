@@ -20,7 +20,7 @@ Add the following dependency in your Maven project:
 ### Gradle
 
 ```groovy
-compile "ai.spice:spiceai:0.1.0"
+implementation 'ai.spice:spiceai:0.1.0'
 ```
 
 ### Manual installation
