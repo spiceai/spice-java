@@ -19,7 +19,9 @@ Add the following dependency in your Maven project:
 
 ### Gradle
 
-Gradle build support is in progress
+```groovy
+compile "ai.spice:spiceai:0.1.0"
+```
 
 ### Manual installation
 
@@ -90,6 +92,21 @@ public class Example {
     }
 }
 ```
+
+### Connection retry
+
+The `SpiceClient` implements connection retry mechanism (3 attempts by default).
+The number of attempts can be configured with `withMaxRetries`:
+
+```java
+SpiceClient client = SpiceClient.builder()
+    .withMaxRetries(5) // Setting to 0 will disable retries
+    .build();
+
+```
+
+Retries are performed for connection and system internal errors. It is the SDK user's responsibility to properly
+handle other errors, for example RESOURCE_EXHAUSTED (HTTP 429).
 
 ## 🤝 Connect with us
 

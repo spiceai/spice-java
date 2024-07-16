@@ -25,6 +25,8 @@ package ai.spice;
 import java.net.URI;
 import java.net.URISyntaxException;
 
+import com.google.common.base.Strings;
+
 /**
  * Builder class for creating instances of SpiceClient.
  */
@@ -33,6 +35,7 @@ public class SpiceClientBuilder {
     private String appId;
     private String apiKey;
     private URI flightAddress;
+    private int maxRetries = 3;
 
     /**
      * Constructs a new SpiceClientBuilder instance
@@ -50,6 +53,9 @@ public class SpiceClientBuilder {
      * @return The current instance of SpiceClientBuilder for method chaining.
      */
     public SpiceClientBuilder withFlightAddress(URI flightAddress) {
+        if (flightAddress == null) {
+            throw new IllegalArgumentException("flightAddress can't be null");
+        }
         this.flightAddress = flightAddress;
         return this;
     }
@@ -62,6 +68,10 @@ public class SpiceClientBuilder {
      * @throws IllegalArgumentException Thrown when the apiKey is in wrong format.
      */
     public SpiceClientBuilder withApiKey(String apiKey) {
+        if (Strings.isNullOrEmpty(apiKey)) {
+            throw new IllegalArgumentException("apiKey can't be null or empty");
+        }
+
         String[] parts = apiKey.split("\\|");
         if (parts.length != 2) {
             throw new IllegalArgumentException("apiKey is invalid");
@@ -84,11 +94,24 @@ public class SpiceClientBuilder {
     }
 
     /**
+     * Sets the maximum number of connection retries for the client.
+     *
+     * @return The current instance of SpiceClientBuilder for method chaining.
+     */
+    public SpiceClientBuilder withMaxRetries(int maxRetries) {
+        if (maxRetries < 0) {
+            throw new IllegalArgumentException("maxRetries must be greater than or equal to 0");
+        }
+        this.maxRetries = maxRetries;
+        return this;
+    }
+
+    /**
      * Creates SpiceClient with provided parameters.
      *
      * @return The SpiceClient instance
      */
     public SpiceClient build() {
-        return new SpiceClient(appId, apiKey, flightAddress);
+        return new SpiceClient(appId, apiKey, flightAddress, maxRetries);
     }
 }
