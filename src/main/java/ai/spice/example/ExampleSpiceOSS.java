@@ -28,7 +28,7 @@ import ai.spice.SpiceClient;
 
 /**
  * Example of using SDK with Spice.ai OSS (Local)
- * mvn exec:java -Dexec.mainClass="ai.spice.example.ExampleSpiceOSS"
+ * _JAVA_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED" mvn exec:java -Dexec.mainClass="ai.spice.example.ExampleSpiceOSS"
  * 
  * Requires local Spice OSS running. Follow the quickstart https://github.com/spiceai/spiceai?tab=readme-ov-file#%EF%B8%8F-quickstart-local-machine.
  */
