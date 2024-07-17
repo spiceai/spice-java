@@ -1,4 +1,4 @@
-name: Publish to Maven Central
+name: publish (Maven Central)
 
 on:
   release:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,6 +19,8 @@ jobs:
         with:
           distribution: oracle
           java-version: 17
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Build
         run: make build

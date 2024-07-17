@@ -110,7 +110,7 @@
                         </goals>
                         <configuration>
                             <keyname>${env.GPG_KEYNAME}</keyname>
-                            <passphrase>${env.GPG_PASS}</passphrase>
+                            <passphrase>${env.GPG_PASSPHRASE}</passphrase>
                         </configuration>
                     </execution>
                 </executions>

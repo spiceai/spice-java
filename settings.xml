@@ -9,5 +9,4 @@
       <password>${env.MAVEN_PASSWORD}</password>
     </server>
   </servers>
-
 </settings>
