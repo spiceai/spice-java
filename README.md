@@ -6,7 +6,7 @@ For full documentation visit [docs.spice.ai](https://docs.spice.ai/sdks/java-sdk
 
 ### Maven
 
-Add the following dependency in your Maven project:
+Add the following dependency to your Maven project:
 
 ```xml
 <dependency>
@@ -18,6 +18,8 @@ Add the following dependency in your Maven project:
 ```
 
 ### Gradle
+
+Add the following dependency to your Gradle project:
 
 ```groovy
 implementation 'ai.spice:spiceai:0.1.0'
@@ -43,9 +45,9 @@ This library supports the following Java implementations:
 
 ## Usage
 
-### With locally running [Spice runtime](https://github.com/spiceai/spiceai)
+### With locally running [Spice.ai OSS](https://github.com/spiceai/spiceai)
 
-Requires local Spice OSS running: [follow the quickstart]( https://github.com/spiceai/spiceai?tab=readme-ov-file#%EF%B8%8F-quickstart-local-machine)
+Requires local Spice running: [follow the quickstart]( https://github.com/spiceai/spiceai?tab=readme-ov-file#%EF%B8%8F-quickstart-local-machine)
 
 ```java
 import org.apache.arrow.flight.FlightStream;
@@ -54,20 +56,25 @@ import ai.spice.SpiceClient;
 public class Example {
 
     public static void main(String[] args) {
-        SpiceClient client = SpiceClient.builder()
-            .build();
+        try (SpiceClient client = SpiceClient.builder()
+                .build()) {
 
-        FlightStream res = client.query("SELECT * FROM taxi_trips;");
+            FlightStream stream = client.query("SELECT * FROM taxi_trips LIMIT 10;");
 
-        while (res.next()) {
-            System.out.println(res.getRoot().contentToTSVString());
+            while (stream.next()) {
+                try (VectorSchemaRoot batches = stream.getRoot()) {
+                    System.out.println(batches.contentToTSVString());
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("An unexpected error occurred: " + e.getMessage());
         }
     }
 }
 
 ```
 
-### With [Spice.ai Cloud Platform](https://spice.ai)
+### With [Spice.ai Cloud](https://spice.ai)
 
 Create [free Spice.ai account](https://spice.ai/login) to obtain API_KEY
 
@@ -79,15 +86,20 @@ public class Example {
     final static String API_KEY = "api-key";
 
     public static void main(String[] args) {
-        SpiceClient client = SpiceClient.builder()
-            .withApiKey(API_KEY)
-            .withSpiceCloud()
-            .build();
+        try (SpiceClient client = SpiceClient.builder()
+                .withApiKey(API_KEY)
+                .withSpiceCloud()
+                .build()) {
 
-        FlightStream res = client.query("SELECT * FROM eth.recent_blocks LIMIT 10;");
+            FlightStream stream = client.query("SELECT * FROM eth.recent_blocks LIMIT 10;");
 
-        while (res.next()) {
-            System.out.println(res.getRoot().contentToTSVString());
+            while (stream.next()) {
+                try (VectorSchemaRoot batches = stream.getRoot()) {
+                    System.out.println(batches.contentToTSVString());
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("An unexpected error occurred: " + e.getMessage());
         }
     }
 }

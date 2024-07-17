@@ -40,7 +40,7 @@ public class ExampleSpiceOSS {
         try (SpiceClient client = SpiceClient.builder()
                 .build()) {
 
-            FlightStream stream = client.query("SELECT * FROM taxi_trips limit 10;");
+            FlightStream stream = client.query("SELECT * FROM taxi_trips LIMIT 10;");
 
             while (stream.next()) {
                 try (VectorSchemaRoot batches = stream.getRoot()) {
