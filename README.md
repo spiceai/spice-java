@@ -25,7 +25,7 @@ implementation 'ai.spice:spiceai:0.1.0'
 
 ### Manual installation
 
-jars are available from a public [maven](https://mvnrepository.com/artifact/ai.spice/spiceai) repository. To build own .jar, execute command below from repository root:
+Pre-built jars are available from a public [maven](https://mvnrepository.com/artifact/ai.spice/spiceai) repository. To build a .jar, execute the command below from the repository root:
 
 ```shell
 mvn package -Dmaven.test.skip=true
@@ -45,7 +45,7 @@ This library supports the following Java implementations:
 
 ### With locally running [Spice runtime](https://github.com/spiceai/spiceai)
 
-Requires local Spice OSS running: [follow the quickstart]( https://github.com/spiceai/spiceai?tab=readme-ov-file#%EF%B8%8F-quickstart-local-machine)
+Follow the [quickstart guide](https://github.com/spiceai/spiceai?tab=readme-ov-file#%EF%B8%8F-quickstart-local-machine) to install and run spice locally:
 
 ```java
 import org.apache.arrow.flight.FlightStream;
@@ -69,7 +69,7 @@ public class Example {
 
 ### With [Spice.ai Cloud Platform](https://spice.ai)
 
-Create [free Spice.ai account](https://spice.ai/login) to obtain API_KEY
+Create a [free Spice.ai account](https://spice.ai/login) to obtain an API_KEY
 
 ```java
 import org.apache.arrow.flight.FlightStream;
@@ -95,7 +95,7 @@ public class Example {
 
 ### Connection retry
 
-The `SpiceClient` implements connection retry mechanism (3 attempts by default).
+The `SpiceClient` implements a connection retry mechanism with 3 attempts by default.
 The number of attempts can be configured with `withMaxRetries`:
 
 ```java
