@@ -95,7 +95,8 @@ public class SpiceClientBuilder {
 
     /**
      * Sets the maximum number of connection retries for the client.
-     *
+     * 
+     * @param maxRetries The maximum number of connection retries
      * @return The current instance of SpiceClientBuilder for method chaining.
      */
     public SpiceClientBuilder withMaxRetries(int maxRetries) {
