@@ -24,7 +24,9 @@ package ai.spice;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.concurrent.ExecutionException;
 
+import org.apache.arrow.flight.CallStatus;
 import org.apache.arrow.flight.FlightClient;
 import org.apache.arrow.flight.FlightClient.Builder;
 import org.apache.arrow.flight.FlightStream;
@@ -34,10 +36,15 @@ import org.apache.arrow.flight.auth2.BasicAuthCredentialWriter;
 import org.apache.arrow.flight.auth2.ClientBearerHeaderHandler;
 import org.apache.arrow.flight.auth2.ClientIncomingAuthHeaderMiddleware;
 import org.apache.arrow.flight.grpc.CredentialCallOption;
-
 import org.apache.arrow.flight.FlightInfo;
+import org.apache.arrow.flight.FlightRuntimeException;
 import org.apache.arrow.memory.RootAllocator;
 
+import com.github.rholder.retry.RetryException;
+import com.github.rholder.retry.Retryer;
+import com.github.rholder.retry.RetryerBuilder;
+import com.github.rholder.retry.StopStrategies;
+import com.github.rholder.retry.WaitStrategies;
 import com.google.common.base.Strings;
 
 import org.apache.arrow.flight.sql.FlightSqlClient;
@@ -50,6 +57,7 @@ public class SpiceClient {
     private String appId;
     private String apiKey;
     private URI flightAddress;
+    private int maxRetries;
     private FlightSqlClient flightClient;
     private CredentialCallOption authCallOptions = null;
 
@@ -65,13 +73,19 @@ public class SpiceClient {
 
     /**
      * Constructs a new SpiceClient instance with the specified parameters
-    * @param appId        the application ID used to identify the client application
-    * @param apiKey       the API key used for authentication with Spice.ai services
-    * @param flightAddress the URI of the flight address for connecting to Spice.ai services
-    */
-    public SpiceClient(String appId, String apiKey, URI flightAddress) {
+     * 
+     * @param appId         the application ID used to identify the client
+     *                      application
+     * @param apiKey        the API key used for authentication with Spice.ai
+     *                      services
+     * @param flightAddress the URI of the flight address for connecting to Spice.ai
+     *                      services
+     * @param maxRetries    the maximum number of connection retries for the client
+     */
+    public SpiceClient(String appId, String apiKey, URI flightAddress, int maxRetries) {
         this.appId = appId;
         this.apiKey = apiKey;
+        this.maxRetries = maxRetries;
 
         // Arrow Flight requires URI to be grpc protocol, convert http/https for
         // convinience
@@ -104,14 +118,53 @@ public class SpiceClient {
      *
      * @param sql the SQL query to execute
      * @return a FlightStream with the query results
+     * @throws ExecutionException if there is an error executing the query
      */
-    public FlightStream query(String sql) {
+    public FlightStream query(String sql) throws ExecutionException {
         if (Strings.isNullOrEmpty(sql)) {
             throw new IllegalArgumentException("No SQL query provided");
         }
 
+        try {
+            return this.queryInternalWithRetry(sql);
+        } catch (RetryException e) {
+            Throwable err = e.getLastFailedAttempt().getExceptionCause();
+            throw new ExecutionException("Failed to execute query due to error: " + err.getMessage(), err);
+        }
+    }
+
+    private FlightStream queryInternal(String sql) {
         FlightInfo flightInfo = this.flightClient.execute(sql, authCallOptions);
         Ticket ticket = flightInfo.getEndpoints().get(0).getTicket();
         return this.flightClient.getStream(ticket, authCallOptions);
+    }
+
+    private FlightStream queryInternalWithRetry(String sql) throws ExecutionException, RetryException {
+        Retryer<FlightStream> retryer = RetryerBuilder.<FlightStream>newBuilder()
+                .retryIfException(throwable -> {
+                    if (throwable instanceof FlightRuntimeException) {
+                        FlightRuntimeException flightException = (FlightRuntimeException) throwable;
+                        CallStatus status = flightException.status();
+                        return shouldRetry(status);
+                    }
+                    return false;
+                })
+                .withWaitStrategy(WaitStrategies.fibonacciWait())
+                .withStopStrategy(StopStrategies.stopAfterAttempt(this.maxRetries + 1))
+                .build();
+
+        return retryer.call(() -> this.queryInternal(sql));
+    }
+
+    private boolean shouldRetry(CallStatus status) {
+        switch (status.code()) {
+            case UNAVAILABLE:
+            case UNKNOWN:
+            case TIMED_OUT:
+            case INTERNAL:
+                return true;
+            default:
+                return false;
+        }
     }
 }
