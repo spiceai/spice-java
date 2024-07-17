@@ -23,6 +23,7 @@ SOFTWARE.
 package ai.spice.example;
 
 import org.apache.arrow.flight.FlightStream;
+import org.apache.arrow.vector.VectorSchemaRoot;
 
 import ai.spice.SpiceClient;
 
@@ -36,16 +37,17 @@ public class ExampleSpiceCloudPlatform {
     final static String API_KEY = "api-key";
 
     public static void main(String[] args) {
-        try {
-            SpiceClient client = SpiceClient.builder()
-                    .withApiKey(API_KEY)
-                    .withSpiceCloud()
-                    .build();
+        try (SpiceClient client = SpiceClient.builder()
+                .withApiKey(API_KEY)
+                .withSpiceCloud()
+                .build()) {
 
-            FlightStream res = client.query("SELECT * FROM eth.recent_blocks LIMIT 10;");
+            FlightStream stream = client.query("SELECT * FROM eth.recent_blocks LIMIT 10;");
 
-            while (res.next()) {
-                System.out.println(res.getRoot().contentToTSVString());
+            while (stream.next()) {
+                try (VectorSchemaRoot batches = stream.getRoot()) {
+                    System.out.println(batches.contentToTSVString());
+                }
             }
         } catch (Exception e) {
             System.err.println("An unexpected error occurred: " + e.getMessage());
