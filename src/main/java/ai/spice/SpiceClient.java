@@ -52,7 +52,7 @@ import org.apache.arrow.flight.sql.FlightSqlClient;
 /**
  * Client to execute SQL queries against Spice.ai Cloud and Spice.ai OSS
  */
-public class SpiceClient {
+public class SpiceClient implements AutoCloseable {
 
     private String appId;
     private String apiKey;
@@ -166,5 +166,10 @@ public class SpiceClient {
             default:
                 return false;
         }
+    }
+
+    @Override
+    public void close() throws Exception {
+        this.flightClient.close();
     }
 }

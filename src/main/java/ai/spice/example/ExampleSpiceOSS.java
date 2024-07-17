@@ -23,6 +23,7 @@ SOFTWARE.
 package ai.spice.example;
 
 import org.apache.arrow.flight.FlightStream;
+import org.apache.arrow.vector.VectorSchemaRoot;
 
 import ai.spice.SpiceClient;
 
@@ -30,19 +31,21 @@ import ai.spice.SpiceClient;
  * Example of using SDK with Spice.ai OSS (Local)
  * _JAVA_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED" mvn exec:java -Dexec.mainClass="ai.spice.example.ExampleSpiceOSS"
  * 
- * Requires local Spice OSS running. Follow the quickstart https://github.com/spiceai/spiceai?tab=readme-ov-file#%EF%B8%8F-quickstart-local-machine.
+ * Requires local Spice OSS running. Follow the quickstart
+ * https://github.com/spiceai/spiceai?tab=readme-ov-file#%EF%B8%8F-quickstart-local-machine.
  */
 public class ExampleSpiceOSS {
 
     public static void main(String[] args) {
-        try {
-            SpiceClient client = SpiceClient.builder()
-                    .build();
+        try (SpiceClient client = SpiceClient.builder()
+                .build()) {
 
-            FlightStream res = client.query("SELECT * FROM taxi_trips limit 10;");
+            FlightStream stream = client.query("SELECT * FROM taxi_trips limit 10;");
 
-            while (res.next()) {
-                System.out.println(res.getRoot().contentToTSVString());
+            while (stream.next()) {
+                try (VectorSchemaRoot batches = stream.getRoot()) {
+                    System.out.println(batches.contentToTSVString());
+                }
             }
         } catch (Exception e) {
             System.err.println("An unexpected error occurred: " + e.getMessage());
