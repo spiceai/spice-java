@@ -25,7 +25,7 @@ implementation 'ai.spice:spiceai:0.1.0'
 
 ### Manual installation
 
-jars are available from a public [maven](https://mvnrepository.com/artifact/spiceai/spiceai) repository. To build own .jar, execute command below from repository root:
+jars are available from a public [maven](https://mvnrepository.com/artifact/ai.spice/spiceai) repository. To build own .jar, execute command below from repository root:
 
 ```shell
 mvn package -Dmaven.test.skip=true
