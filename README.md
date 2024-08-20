@@ -122,8 +122,6 @@ handle other errors, for example RESOURCE_EXHAUSTED (HTTP 429).
 
 ### Spice.ai Runtime commands
 
-Currently supported only with locally running [Spice.ai OSS](https://github.com/spiceai/spiceai).
-
 #### Accelerated dataset refresh
 
 Use `refresh` method to perform [Accelerated Dataset](https://docs.spiceai.org/components/data-accelerators) refresh. See full [dataset refresh example](/src/main/java/ai/spice/example/ExampleDatasetRefreshSpiceOSS.java).
