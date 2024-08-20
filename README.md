@@ -1,6 +1,6 @@
 # Java SDK for Spice.ai
 
-For full documentation visit [docs.spice.ai](https://docs.spice.ai/sdks/java-sdk).
+For full documentation visit [Spice.ai OSS Docs](https://docs.spiceai.org/sdks/java).
 
 ## Installation
 
