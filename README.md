@@ -120,6 +120,21 @@ SpiceClient client = SpiceClient.builder()
 Retries are performed for connection and system internal errors. It is the SDK user's responsibility to properly
 handle other errors, for example RESOURCE_EXHAUSTED (HTTP 429).
 
+### Spice.ai Runtime commands
+
+#### Accelerated dataset refresh
+
+Use `refresh` method to perform [Accelerated Dataset](https://docs.spiceai.org/components/data-accelerators) refresh. See full [dataset refresh example](/src/main/java/ai/spice/example/ExampleDatasetRefreshSpiceOSS.java).
+
+```java
+SpiceClient client = SpiceClient.builder()
+    ..
+    .build();
+
+client.refresh("taxi_trips")
+
+```
+
 ## 🤝 Connect with us
 
 Use [issues](https://github.com/spiceai/spice-java/issues),  [hey@spice.ai](mailto:hey@spice.ai) or [Discord](https://discord.gg/kZnTfneP5u) to send us feedback, suggestion or if you need help installing or using the library.

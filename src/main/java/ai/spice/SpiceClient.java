@@ -22,8 +22,12 @@ SOFTWARE.
 
 package ai.spice;
 
+import java.net.ConnectException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.arrow.flight.CallStatus;
@@ -57,6 +61,7 @@ public class SpiceClient implements AutoCloseable {
     private String appId;
     private String apiKey;
     private URI flightAddress;
+    private URI httpAddress;
     private int maxRetries;
     private FlightSqlClient flightClient;
     private CredentialCallOption authCallOptions = null;
@@ -80,12 +85,15 @@ public class SpiceClient implements AutoCloseable {
      *                      services
      * @param flightAddress the URI of the flight address for connecting to Spice.ai
      *                      services
+     * @param httpAddress   the URI of the Spice.ai runtime HTTP address
+     * 
      * @param maxRetries    the maximum number of connection retries for the client
      */
-    public SpiceClient(String appId, String apiKey, URI flightAddress, int maxRetries) {
+    public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries) {
         this.appId = appId;
         this.apiKey = apiKey;
         this.maxRetries = maxRetries;
+        this.httpAddress = httpAddress;
 
         // Arrow Flight requires URI to be grpc protocol, convert http/https for
         // convinience
@@ -129,7 +137,40 @@ public class SpiceClient implements AutoCloseable {
             return this.queryInternalWithRetry(sql);
         } catch (RetryException e) {
             Throwable err = e.getLastFailedAttempt().getExceptionCause();
-            throw new ExecutionException("Failed to execute query due to error: " + err.getMessage(), err);
+            throw new ExecutionException("Failed to execute query due to error: " + err.toString(), err);
+        }
+    }
+
+    public void refresh(String dataset) throws ExecutionException {
+        if (Strings.isNullOrEmpty(dataset)) {
+            throw new IllegalArgumentException("No dataset name provided");
+        }
+
+        try {
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(new URI(String.format("%s/v1/datasets/%s/acceleration/refresh", this.httpAddress, dataset)))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 201) {
+                throw new ExecutionException(
+                        String.format("Failed to trigger dataset refresh. Status Code: %d, Response: %s",
+                                response.statusCode(),
+                                response.body()),
+                        null);
+            }
+        } catch (ExecutionException e) {
+            // no need to wrap ExecutionException
+            throw e;
+        } catch (ConnectException err) {
+            throw new ExecutionException(
+                    String.format("The Spice runtime is unavailable at %s. Is it running?", this.httpAddress), err);
+        } catch (Exception err) {
+            throw new ExecutionException("Failed to trigger dataset refresh due to error: " + err.toString(), err);
         }
     }
 
