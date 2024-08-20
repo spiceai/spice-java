@@ -31,9 +31,8 @@ import com.google.common.base.Strings;
 
 import junit.framework.TestCase;
 
-public class FlightQueryTest 
-    extends TestCase
-{
+public class FlightQueryTest
+        extends TestCase {
     public void testQuerySpiceCloudPlatform() throws ExecutionException, InterruptedException {
         try {
             String apiKey = System.getenv("API_KEY");
@@ -96,4 +95,22 @@ public class FlightQueryTest
         }
     }
 
+    public void testRefreshSpiceOSS() throws ExecutionException, InterruptedException {
+        try {
+            SpiceClient spiceClient = SpiceClient.builder()
+                    .build();
+
+            spiceClient.refresh("taxi_trips");
+
+            try {
+                spiceClient.refresh("taxi_trips_does_not_exist");
+                fail("Should throw exception when unable to refresh dataset");
+            } catch (Exception e) {
+                assertTrue("Should correctly pass response message when unable to refresh table",
+                        e.getMessage().contains("\"message\":"));
+            }
+        } catch (Exception e) {
+            fail("Should not throw exception: " + e.getMessage());
+        }
+    }
 }
