@@ -34,10 +34,6 @@ public class Config {
     public static final String CLOUD_FLIGHT_ADDRESS;
     /** Local flight address */
     public static final String LOCAL_FLIGHT_ADDRESS;
-    /** Cloud HTTP address */
-    public static final String CLOUD_HTTP_ADDRESS;
-    /** Local HTTP address */
-    public static final String LOCAL_HTTP_ADDRESS;
 
     static {
         CLOUD_FLIGHT_ADDRESS = System.getenv("SPICE_FLIGHT_URL") != null ? System.getenv("SPICE_FLIGHT_URL")
@@ -45,12 +41,6 @@ public class Config {
 
         LOCAL_FLIGHT_ADDRESS = System.getenv("SPICE_FLIGHT_URL") != null ? System.getenv("SPICE_FLIGHT_URL")
                 : "http://localhost:50051";
-        
-        CLOUD_HTTP_ADDRESS = System.getenv("SPICE_HTTP_URL") != null ? System.getenv("SPICE_HTTP_URL")
-                : "https://data.spiceai.io";
-        
-        LOCAL_HTTP_ADDRESS = System.getenv("SPICE_HTTP_URL") != null ? System.getenv("SPICE_HTTP_URL")
-                : "http://localhost:8090";
     }
 
     /**
@@ -71,25 +61,5 @@ public class Config {
      */
     public static URI getCloudFlightAddressUri() throws URISyntaxException {
         return new URI(CLOUD_FLIGHT_ADDRESS);
-    }
-
-    /**
-     * Returns the local HTTP address
-     *
-     * @return URI of the local HTTP address.
-     * @throws URISyntaxException if the string could not be parsed as a URI.
-     */
-    public static URI getLocalHttpAddressUri() throws URISyntaxException {
-        return new URI(LOCAL_HTTP_ADDRESS);
-    }
-
-    /**
-     * Returns the cloud HTTP address
-     *
-     * @return URI of the cloud HTTP address.
-     * @throws URISyntaxException if the string could not be parsed as a URI.
-     */
-    public static URI getCloudHttpAddressUri() throws URISyntaxException {
-        return new URI(CLOUD_HTTP_ADDRESS);
     }
 }

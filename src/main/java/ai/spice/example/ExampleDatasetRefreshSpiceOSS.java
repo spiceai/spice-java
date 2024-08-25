@@ -22,8 +22,6 @@ SOFTWARE.
 
 package ai.spice.example;
 
-import java.net.URI;
-
 import org.apache.arrow.flight.FlightStream;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
@@ -40,8 +38,6 @@ public class ExampleDatasetRefreshSpiceOSS {
 
     public static void main(String[] args) {
         try (SpiceClient client = SpiceClient.builder()
-                .withFlightAddress(URI.create("http://localhost:50051"))
-                .withHttpAddress(URI.create("http://localhost:8090"))
                 .build()) {
 
             client.refresh("taxi_trips");

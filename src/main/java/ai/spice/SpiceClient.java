@@ -22,14 +22,11 @@ SOFTWARE.
 
 package ai.spice;
 
-import java.net.ConnectException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.util.concurrent.ExecutionException;
 
+import org.apache.arrow.flight.Action;
 import org.apache.arrow.flight.CallStatus;
 import org.apache.arrow.flight.FlightClient;
 import org.apache.arrow.flight.FlightClient.Builder;
@@ -42,6 +39,7 @@ import org.apache.arrow.flight.auth2.ClientIncomingAuthHeaderMiddleware;
 import org.apache.arrow.flight.grpc.CredentialCallOption;
 import org.apache.arrow.flight.FlightInfo;
 import org.apache.arrow.flight.FlightRuntimeException;
+import org.apache.arrow.flight.FlightStatusCode;
 import org.apache.arrow.memory.RootAllocator;
 
 import com.github.rholder.retry.RetryException;
@@ -52,6 +50,7 @@ import com.github.rholder.retry.WaitStrategies;
 import com.google.common.base.Strings;
 
 import org.apache.arrow.flight.sql.FlightSqlClient;
+import ai.spice.proto.Spice.AcceleratedDatasetRefreshRequest;
 
 /**
  * Client to execute SQL queries against Spice.ai Cloud and Spice.ai OSS
@@ -61,9 +60,9 @@ public class SpiceClient implements AutoCloseable {
     private String appId;
     private String apiKey;
     private URI flightAddress;
-    private URI httpAddress;
     private int maxRetries;
-    private FlightSqlClient flightClient;
+    private FlightSqlClient flightSqlClient;
+    private FlightClient flightClient;
     private CredentialCallOption authCallOptions = null;
 
     /**
@@ -85,15 +84,12 @@ public class SpiceClient implements AutoCloseable {
      *                      services
      * @param flightAddress the URI of the flight address for connecting to Spice.ai
      *                      services
-     * @param httpAddress   the URI of the Spice.ai runtime HTTP address
-     * 
      * @param maxRetries    the maximum number of connection retries for the client
      */
-    public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries) {
+    public SpiceClient(String appId, String apiKey, URI flightAddress, int maxRetries) {
         this.appId = appId;
         this.apiKey = apiKey;
         this.maxRetries = maxRetries;
-        this.httpAddress = httpAddress;
 
         // Arrow Flight requires URI to be grpc protocol, convert http/https for
         // convinience
@@ -108,7 +104,8 @@ public class SpiceClient implements AutoCloseable {
         Builder builder = FlightClient.builder(new RootAllocator(Long.MAX_VALUE), new Location(this.flightAddress));
 
         if (Strings.isNullOrEmpty(apiKey)) {
-            this.flightClient = new FlightSqlClient(builder.build());
+            this.flightClient = builder.build();
+            this.flightSqlClient = new FlightSqlClient(this.flightClient);
             return;
         }
 
@@ -118,7 +115,8 @@ public class SpiceClient implements AutoCloseable {
         final FlightClient client = builder.intercept(factory).build();
         client.handshake(new CredentialCallOption(new BasicAuthCredentialWriter(this.appId, this.apiKey)));
         this.authCallOptions = factory.getCredentialCallOption();
-        this.flightClient = new FlightSqlClient(client);
+        this.flightClient = client;
+        this.flightSqlClient = new FlightSqlClient(client);
     }
 
     /**
@@ -137,6 +135,10 @@ public class SpiceClient implements AutoCloseable {
             return this.queryInternalWithRetry(sql);
         } catch (RetryException e) {
             Throwable err = e.getLastFailedAttempt().getExceptionCause();
+            if (err instanceof FlightRuntimeException) {
+                maybeSpiceConnectionError((FlightRuntimeException) err);
+            }
+
             throw new ExecutionException("Failed to execute query due to error: " + err.toString(), err);
         }
     }
@@ -147,37 +149,31 @@ public class SpiceClient implements AutoCloseable {
         }
 
         try {
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(new URI(String.format("%s/v1/datasets/%s/acceleration/refresh", this.httpAddress, dataset)))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            AcceleratedDatasetRefreshRequest request = AcceleratedDatasetRefreshRequest.newBuilder()
+                    .setDatasetName(dataset).build();
 
-            if (response.statusCode() != 201) {
-                throw new ExecutionException(
-                        String.format("Failed to trigger dataset refresh. Status Code: %d, Response: %s",
-                                response.statusCode(),
-                                response.body()),
-                        null);
+            Action action = new Action("AcceleratedDatasetRefresh", request.toByteArray());
+
+            if (!this.flightClient.doAction(action).hasNext()) {
+                throw new ExecutionException("Failed to trigger dataset refresh: No response from the server.", null);
             }
+
         } catch (ExecutionException e) {
             // no need to wrap ExecutionException
             throw e;
-        } catch (ConnectException err) {
-            throw new ExecutionException(
-                    String.format("The Spice runtime is unavailable at %s. Is it running?", this.httpAddress), err);
+        } catch (FlightRuntimeException err) {
+            maybeSpiceConnectionError(err);
+            throw new ExecutionException("Failed to trigger dataset refresh due to error: " + err.toString(), err);
         } catch (Exception err) {
             throw new ExecutionException("Failed to trigger dataset refresh due to error: " + err.toString(), err);
         }
     }
 
     private FlightStream queryInternal(String sql) {
-        FlightInfo flightInfo = this.flightClient.execute(sql, authCallOptions);
+        FlightInfo flightInfo = this.flightSqlClient.execute(sql, authCallOptions);
         Ticket ticket = flightInfo.getEndpoints().get(0).getTicket();
-        return this.flightClient.getStream(ticket, authCallOptions);
+        return this.flightSqlClient.getStream(ticket, authCallOptions);
     }
 
     private FlightStream queryInternalWithRetry(String sql) throws ExecutionException, RetryException {
@@ -209,8 +205,16 @@ public class SpiceClient implements AutoCloseable {
         }
     }
 
+    private void maybeSpiceConnectionError(FlightRuntimeException err) throws ExecutionException {
+        if (err.status().code() == FlightStatusCode.UNAVAILABLE) {
+            throw new ExecutionException(
+                    String.format("The Spice runtime is unavailable at %s. Is it running?", this.flightAddress), err);
+        }
+    }
+
     @Override
     public void close() throws Exception {
-        this.flightClient.close();
+        this.flightSqlClient.close();
+        // Note: flightClient is shutdown by flightSqlClient, no need to close it here
     }
 }
