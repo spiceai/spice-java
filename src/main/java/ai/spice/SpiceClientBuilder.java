@@ -35,7 +35,6 @@ public class SpiceClientBuilder {
     private String appId;
     private String apiKey;
     private URI flightAddress;
-    private URI httpAddress;
     private int maxRetries = 3;
 
     /**
@@ -45,7 +44,6 @@ public class SpiceClientBuilder {
      */
     SpiceClientBuilder() throws URISyntaxException {
         this.flightAddress = Config.getLocalFlightAddressUri();
-        this.httpAddress = Config.getLocalHttpAddressUri();
     }
 
     /**
@@ -59,20 +57,6 @@ public class SpiceClientBuilder {
             throw new IllegalArgumentException("flightAddress can't be null");
         }
         this.flightAddress = flightAddress;
-        return this;
-    }
-
-    /**
-     * Sets the client's HTTP address
-     * 
-     * @param httpAddress The URI of the HTTP address
-     * @return The current instance of SpiceClientBuilder for method chaining.
-     */
-    public SpiceClientBuilder withHttpAddress(URI httpAddress) {
-        if (httpAddress == null) {
-            throw new IllegalArgumentException("httpAddress can't be null");
-        }
-        this.httpAddress = httpAddress;
         return this;
     }
 
@@ -106,7 +90,6 @@ public class SpiceClientBuilder {
      */
     public SpiceClientBuilder withSpiceCloud() throws URISyntaxException {
         this.flightAddress = Config.getCloudFlightAddressUri();
-        this.httpAddress = Config.getCloudHttpAddressUri();
         return this;
     }
 
@@ -130,6 +113,6 @@ public class SpiceClientBuilder {
      * @return The SpiceClient instance
      */
     public SpiceClient build() {
-        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries);
+        return new SpiceClient(appId, apiKey, flightAddress, maxRetries);
     }
 }
