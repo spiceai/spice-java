@@ -16,10 +16,15 @@ jobs:
       fail-fast: false
       matrix:
         java:
+          - version: 11
+            distribution: microsoft # OpenJDK build by Microsoft
           - version: 17
             distribution: microsoft # OpenJDK build by Microsoft
           - version: 21
             distribution: microsoft # OpenJDK build by Microsoft
+          # setup-java supports Oracle JDS 17 and later
+          # - version: 11
+          #   distribution: oracle
           - version: 17
             distribution: oracle
           - version: 21
