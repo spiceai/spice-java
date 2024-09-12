@@ -37,8 +37,10 @@ mvn package -Dmaven.test.skip=true
 
 This library supports the following Java implementations:
 
+- OpenJDK 11
 - OpenJDK 17
 - OpenJDK 21
+- OracleJDK 11
 - OracleJDK 17
 - OracleJDK 21
 - OracleJDK 22
