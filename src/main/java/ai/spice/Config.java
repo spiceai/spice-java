@@ -108,7 +108,13 @@ public class Config {
             osArch = "i386";
         }
 
-        return "spice-java " + Version.SPICE_JAVA_VERSION + " (" + System.getProperty("os.name") + "/"
+        // change the os name to match the pattern set in other SDKs
+        String osName = System.getProperty("os.name");
+        if (osName.equals("Mac OS X")) {
+            osName = "Darwin";
+        }
+
+        return "spice-java " + Version.SPICE_JAVA_VERSION + " (" + osName + "/"
                 + System.getProperty("os.version") + " "
                 + osArch + ")";
     }
