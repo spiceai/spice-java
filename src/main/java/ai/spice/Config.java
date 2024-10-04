@@ -112,6 +112,15 @@ public class Config {
         String osName = System.getProperty("os.name");
         if (osName.equals("Mac OS X")) {
             osName = "Darwin";
+        } else if (osName.contains("Windows")) {
+            osName = "Windows"; // this renames Windows OS names like "Windows Server 2022" to just "Windows"
+        }
+
+        // The Windows OS version strings also include the arch after the version, so we
+        // need to remove it
+        String osVersion = System.getProperty("os.version");
+        if (osName.equals("Windows")) {
+            osVersion = osVersion.split(" ")[0];
         }
 
         return "spice-java " + Version.SPICE_JAVA_VERSION + " (" + osName + "/"
