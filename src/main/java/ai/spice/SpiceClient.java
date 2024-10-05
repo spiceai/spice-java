@@ -28,6 +28,8 @@ import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.arrow.flight.CallStatus;
@@ -112,12 +114,20 @@ public class SpiceClient implements AutoCloseable {
             return;
         }
 
-        final ClientIncomingAuthHeaderMiddleware.Factory factory = new ClientIncomingAuthHeaderMiddleware.Factory(
+        // prepare additional headers to insert into Flight requests
+        Map<String, String> headers = new HashMap<>();
+        headers.put("X-Spice-User-Agent", Config.getUserAgent());
+
+        final ClientIncomingAuthHeaderMiddleware.Factory authFactory = new ClientIncomingAuthHeaderMiddleware.Factory(
                 new ClientBearerHeaderHandler());
 
-        final FlightClient client = builder.intercept(factory).build();
+        // builder can't chain .intercept()s, so we need to chain the middleware
+        // factories instead
+        final HeaderAuthMiddlewareFactory combinedFactory = new HeaderAuthMiddlewareFactory(authFactory, headers);
+
+        final FlightClient client = builder.intercept(combinedFactory).build();
         client.handshake(new CredentialCallOption(new BasicAuthCredentialWriter(this.appId, this.apiKey)));
-        this.authCallOptions = factory.getCredentialCallOption();
+        this.authCallOptions = authFactory.getCredentialCallOption();
         this.flightClient = new FlightSqlClient(client);
     }
 
@@ -151,6 +161,7 @@ public class SpiceClient implements AutoCloseable {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(new URI(String.format("%s/v1/datasets/%s/acceleration/refresh", this.httpAddress, dataset)))
                     .header("Content-Type", "application/json")
+                    .header("X-Spice-User-Agent", Config.getUserAgent())
                     .POST(HttpRequest.BodyPublishers.noBody())
                     .build();
 

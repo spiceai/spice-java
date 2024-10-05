@@ -45,10 +45,10 @@ public class Config {
 
         LOCAL_FLIGHT_ADDRESS = System.getenv("SPICE_FLIGHT_URL") != null ? System.getenv("SPICE_FLIGHT_URL")
                 : "http://localhost:50051";
-        
+
         CLOUD_HTTP_ADDRESS = System.getenv("SPICE_HTTP_URL") != null ? System.getenv("SPICE_HTTP_URL")
                 : "https://data.spiceai.io";
-        
+
         LOCAL_HTTP_ADDRESS = System.getenv("SPICE_HTTP_URL") != null ? System.getenv("SPICE_HTTP_URL")
                 : "http://localhost:8090";
     }
@@ -91,5 +91,40 @@ public class Config {
      */
     public static URI getCloudHttpAddressUri() throws URISyntaxException {
         return new URI(CLOUD_HTTP_ADDRESS);
+    }
+
+    /**
+     * Returns the Spice SDK user agent for this system, including the package
+     * version, system OS, version and arch.
+     * 
+     * @return the Spice SDK user agent string for this system.
+     */
+    public static String getUserAgent() {
+        // change the os arch to match the pattern set in other SDKs
+        String osArch = System.getProperty("os.arch");
+        if (osArch.equals("amd64")) {
+            osArch = "x86_64";
+        } else if (osArch.equals("x86")) {
+            osArch = "i386";
+        }
+
+        // change the os name to match the pattern set in other SDKs
+        String osName = System.getProperty("os.name");
+        if (osName.equals("Mac OS X")) {
+            osName = "Darwin";
+        } else if (osName.contains("Windows")) {
+            osName = "Windows"; // this renames Windows OS names like "Windows Server 2022" to just "Windows"
+        }
+
+        // The Windows OS version strings also include the arch after the version, so we
+        // need to remove it
+        String osVersion = System.getProperty("os.version");
+        if (osName.equals("Windows")) {
+            osVersion = osVersion.split(" ")[0];
+        }
+
+        return "spice-java " + Version.SPICE_JAVA_VERSION + " (" + osName + "/"
+                + System.getProperty("os.version") + " "
+                + osArch + ")";
     }
 }
