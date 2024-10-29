@@ -31,7 +31,8 @@ import ai.spice.SpiceClient;
 
 /**
  * Example of using SDK with Spice.ai OSS (Local)
- * _JAVA_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED" mvn exec:java -Dexec.mainClass="ai.spice.example.ExampleDatasetRefreshSpiceOSS"
+ * _JAVA_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED" mvn exec:java
+ * -Dexec.mainClass="ai.spice.example.ExampleDatasetRefreshSpiceOSS"
  * 
  * Requires local Spice OSS running. Follow the quickstart
  * https://github.com/spiceai/spiceai?tab=readme-ov-file#%EF%B8%8F-quickstart-local-machine.
@@ -44,7 +45,7 @@ public class ExampleDatasetRefreshSpiceOSS {
                 .withHttpAddress(URI.create("http://localhost:8090"))
                 .build()) {
 
-            client.refresh("taxi_trips");
+            client.refresh_dataset("taxi_trips");
             System.out.println("Dataset refresh triggered for taxi_trips");
 
             System.out.println("Query taxi_trips dataset");

@@ -100,15 +100,54 @@ public class FlightQueryTest
             SpiceClient spiceClient = SpiceClient.builder()
                     .build();
 
-            spiceClient.refresh("taxi_trips");
+            spiceClient.refresh_dataset("taxi_trips");
 
             try {
-                spiceClient.refresh("taxi_trips_does_not_exist");
+                spiceClient.refresh_dataset("taxi_trips_does_not_exist");
                 fail("Should throw exception when unable to refresh dataset");
             } catch (Exception e) {
                 assertTrue("Should correctly pass response message when unable to refresh table",
                         e.getMessage().contains("\"message\":"));
             }
+        } catch (Exception e) {
+            fail("Should not throw exception: " + e.getMessage());
+        }
+    }
+
+    public void testRefreshWithOptionsSpiceOSS() throws ExecutionException, InterruptedException {
+        try {
+            String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 20;";
+            SpiceClient spiceClient = SpiceClient.builder()
+                    .build();
+
+            FlightStream preRefreshRes = spiceClient.query(sql);
+
+            int preRefreshRows = 0;
+
+            while (preRefreshRes.next()) {
+                VectorSchemaRoot root = preRefreshRes.getRoot();
+                preRefreshRows += root.getRowCount();
+            }
+
+            assertEquals("Expected row count does not match", 20, preRefreshRows);
+
+            RefreshOptions opts = new RefreshOptions().withRefreshSql("SELECT * FROM taxi_trips limit 10");
+
+            spiceClient.refresh_dataset("taxi_trips", opts);
+
+            // wait a couple seconds to let refresh run
+            Thread.sleep(10000);
+
+            FlightStream postRefreshRes = spiceClient.query(sql);
+
+            int postRefreshRows = 0;
+
+            while (postRefreshRes.next()) {
+                VectorSchemaRoot root = postRefreshRes.getRoot();
+                postRefreshRows += root.getRowCount();
+            }
+
+            assertEquals("Expected row count does not match", 10, postRefreshRows);
         } catch (Exception e) {
             fail("Should not throw exception: " + e.getMessage());
         }
