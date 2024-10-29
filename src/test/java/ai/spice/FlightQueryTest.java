@@ -60,8 +60,6 @@ public class FlightQueryTest
                 totalRows += root.getRowCount();
             }
 
-            spiceClient.close();
-
             assertEquals("Expected column count does not match", 4, columnCount);
             assertEquals("Expected row count does not match", 2000, totalRows);
 
@@ -89,8 +87,6 @@ public class FlightQueryTest
                 totalRows += root.getRowCount();
             }
 
-            spiceClient.close();
-
             assertEquals("Expected column count does not match", 3, columnCount);
             assertEquals("Expected row count does not match", 10, totalRows);
 
@@ -113,8 +109,6 @@ public class FlightQueryTest
                 assertTrue("Should correctly pass response message when unable to refresh table",
                         e.getMessage().contains("\"message\":"));
             }
-
-            spiceClient.close();
         } catch (Exception e) {
             fail("Should not throw exception: " + e.getMessage());
         }
@@ -152,8 +146,6 @@ public class FlightQueryTest
                 VectorSchemaRoot root = postRefreshRes.getRoot();
                 postRefreshRows += root.getRowCount();
             }
-
-            spiceClient.close();
 
             assertEquals("Expected row count does not match", 10, postRefreshRows);
         } catch (Exception e) {
