@@ -197,22 +197,23 @@ public class SpiceClient implements AutoCloseable {
      * Refreshes an accelerated dataset using the configured dataset acceleration
      * settings
      * 
-     * @param dataset the name of the dataset to refresh
+     * @param dataset        the name of the dataset to refresh
+     * @param refreshOptions the refresh options to use when refreshing the dataset
      * @throws ExecutionException if there is an error refreshing the dataset
      */
-    public void refresh_dataset(String dataset, RefreshOptions refresh_options) throws ExecutionException {
+    public void refresh_dataset(String dataset, RefreshOptions refreshOptions) throws ExecutionException {
         if (Strings.isNullOrEmpty(dataset)) {
             throw new IllegalArgumentException("No dataset name provided");
         }
 
-        if (refresh_options == null) {
+        if (refreshOptions == null) {
             refresh_dataset(dataset);
             return;
         }
 
         try {
             Gson gson = new Gson();
-            String json = gson.toJson(refresh_options);
+            String json = gson.toJson(refreshOptions);
 
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
