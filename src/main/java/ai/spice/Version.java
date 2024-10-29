@@ -30,6 +30,6 @@ public class Version {
     public static final String SPICE_JAVA_VERSION;
 
     static {
-        SPICE_JAVA_VERSION = "0.3.0";
+        SPICE_JAVA_VERSION = "0.4.0";
     }
 }
