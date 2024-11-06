@@ -159,38 +159,12 @@ public class SpiceClient implements AutoCloseable {
      * @param dataset the name of the dataset to refresh
      * @throws ExecutionException if there is an error refreshing the dataset
      */
-    public void refresh_dataset(String dataset) throws ExecutionException {
+    public void refreshDataset(String dataset) throws ExecutionException {
         if (Strings.isNullOrEmpty(dataset)) {
             throw new IllegalArgumentException("No dataset name provided");
         }
 
-        try {
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(new URI(String.format("%s/v1/datasets/%s/acceleration/refresh", this.httpAddress, dataset)))
-                    .header("Content-Type", "application/json")
-                    .header("X-Spice-User-Agent", Config.getUserAgent())
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() != 201) {
-                throw new ExecutionException(
-                        String.format("Failed to trigger dataset refresh. Status Code: %d, Response: %s",
-                                response.statusCode(),
-                                response.body()),
-                        null);
-            }
-        } catch (ExecutionException e) {
-            // no need to wrap ExecutionException
-            throw e;
-        } catch (ConnectException err) {
-            throw new ExecutionException(
-                    String.format("The Spice runtime is unavailable at %s. Is it running?", this.httpAddress), err);
-        } catch (Exception err) {
-            throw new ExecutionException("Failed to trigger dataset refresh due to error: " + err.toString(), err);
-        }
+        refreshDataset(dataset, null);
     }
 
     /**
@@ -201,28 +175,28 @@ public class SpiceClient implements AutoCloseable {
      * @param refreshOptions the refresh options to use when refreshing the dataset
      * @throws ExecutionException if there is an error refreshing the dataset
      */
-    public void refresh_dataset(String dataset, RefreshOptions refreshOptions) throws ExecutionException {
+    public void refreshDataset(String dataset, RefreshOptions refreshOptions) throws ExecutionException {
         if (Strings.isNullOrEmpty(dataset)) {
             throw new IllegalArgumentException("No dataset name provided");
         }
 
-        if (refreshOptions == null) {
-            refresh_dataset(dataset);
-            return;
-        }
-
         try {
-            Gson gson = new Gson();
-            String json = gson.toJson(refreshOptions);
-
             HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(new URI(String.format("%s/v1/datasets/%s/acceleration/refresh", this.httpAddress, dataset)))
                     .header("Content-Type", "application/json")
-                    .header("X-Spice-User-Agent", Config.getUserAgent())
-                    .POST(HttpRequest.BodyPublishers.ofString(json))
-                    .build();
+                    .header("X-Spice-User-Agent", Config.getUserAgent());
 
+            if (refreshOptions != null) {
+                Gson gson = new Gson();
+                String json = gson.toJson(refreshOptions);
+
+                builder = builder.POST(HttpRequest.BodyPublishers.ofString(json));
+            } else {
+                builder = builder.POST(HttpRequest.BodyPublishers.noBody());
+            }
+
+            HttpRequest request = builder.build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 201) {

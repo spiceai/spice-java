@@ -45,7 +45,7 @@ public class ExampleDatasetRefreshSpiceOSS {
                 .withHttpAddress(URI.create("http://localhost:8090"))
                 .build()) {
 
-            client.refresh_dataset("taxi_trips");
+            client.refreshDataset("taxi_trips");
             System.out.println("Dataset refresh triggered for taxi_trips");
 
             System.out.println("Query taxi_trips dataset");

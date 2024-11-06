@@ -100,10 +100,10 @@ public class FlightQueryTest
             SpiceClient spiceClient = SpiceClient.builder()
                     .build();
 
-            spiceClient.refresh_dataset("taxi_trips");
+            spiceClient.refreshDataset("taxi_trips");
 
             try {
-                spiceClient.refresh_dataset("taxi_trips_does_not_exist");
+                spiceClient.refreshDataset("taxi_trips_does_not_exist");
                 fail("Should throw exception when unable to refresh dataset");
             } catch (Exception e) {
                 assertTrue("Should correctly pass response message when unable to refresh table",
@@ -133,7 +133,7 @@ public class FlightQueryTest
 
             RefreshOptions opts = new RefreshOptions().withRefreshSql("SELECT * FROM taxi_trips limit 10");
 
-            spiceClient.refresh_dataset("taxi_trips", opts);
+            spiceClient.refreshDataset("taxi_trips", opts);
 
             // wait a couple seconds to let refresh run
             Thread.sleep(10000);
