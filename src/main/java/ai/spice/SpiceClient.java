@@ -52,6 +52,7 @@ import com.github.rholder.retry.RetryerBuilder;
 import com.github.rholder.retry.StopStrategies;
 import com.github.rholder.retry.WaitStrategies;
 import com.google.common.base.Strings;
+import com.google.gson.Gson;
 
 import org.apache.arrow.flight.sql.FlightSqlClient;
 
@@ -151,20 +152,51 @@ public class SpiceClient implements AutoCloseable {
         }
     }
 
-    public void refresh(String dataset) throws ExecutionException {
+    /**
+     * Refreshes an accelerated dataset using the configured dataset acceleration
+     * settings
+     * 
+     * @param dataset the name of the dataset to refresh
+     * @throws ExecutionException if there is an error refreshing the dataset
+     */
+    public void refreshDataset(String dataset) throws ExecutionException {
+        if (Strings.isNullOrEmpty(dataset)) {
+            throw new IllegalArgumentException("No dataset name provided");
+        }
+
+        refreshDataset(dataset, null);
+    }
+
+    /**
+     * Refreshes an accelerated dataset using the configured dataset acceleration
+     * settings
+     * 
+     * @param dataset        the name of the dataset to refresh
+     * @param refreshOptions the refresh options to use when refreshing the dataset
+     * @throws ExecutionException if there is an error refreshing the dataset
+     */
+    public void refreshDataset(String dataset, RefreshOptions refreshOptions) throws ExecutionException {
         if (Strings.isNullOrEmpty(dataset)) {
             throw new IllegalArgumentException("No dataset name provided");
         }
 
         try {
             HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(new URI(String.format("%s/v1/datasets/%s/acceleration/refresh", this.httpAddress, dataset)))
                     .header("Content-Type", "application/json")
-                    .header("X-Spice-User-Agent", Config.getUserAgent())
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .build();
+                    .header("X-Spice-User-Agent", Config.getUserAgent());
 
+            if (refreshOptions != null) {
+                Gson gson = new Gson();
+                String json = gson.toJson(refreshOptions);
+
+                builder = builder.POST(HttpRequest.BodyPublishers.ofString(json));
+            } else {
+                builder = builder.POST(HttpRequest.BodyPublishers.noBody());
+            }
+
+            HttpRequest request = builder.build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 201) {
