@@ -131,7 +131,8 @@ public class FlightQueryTest
 
             assertEquals("Expected row count does not match", 20, preRefreshRows);
 
-            RefreshOptions opts = new RefreshOptions().withRefreshSql("SELECT * FROM taxi_trips limit 10");
+            RefreshOptions opts = new RefreshOptions().withRefreshSql("SELECT * FROM taxi_trips limit 10")
+                    .withRefreshJitterMax("1s");
 
             spiceClient.refreshDataset("taxi_trips", opts);
 
