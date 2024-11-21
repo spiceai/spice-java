@@ -92,7 +92,7 @@ public class SpiceClient implements AutoCloseable {
      * 
      * @param maxRetries    the maximum number of connection retries for the client
      */
-    public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries) {
+    public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries, String userAgent) {
         this.appId = appId;
         this.apiKey = apiKey;
         this.maxRetries = maxRetries;
@@ -117,7 +117,13 @@ public class SpiceClient implements AutoCloseable {
 
         // prepare additional headers to insert into Flight requests
         Map<String, String> headers = new HashMap<>();
-        headers.put("X-Spice-User-Agent", Config.getUserAgent());
+        String uaString;
+        if (Strings.isNullOrEmpty(userAgent)) {
+            uaString = Config.getUserAgent();
+        } else {
+            uaString = userAgent;
+        }
+        headers.put("User-Agent", uaString);
 
         final ClientIncomingAuthHeaderMiddleware.Factory authFactory = new ClientIncomingAuthHeaderMiddleware.Factory(
                 new ClientBearerHeaderHandler());

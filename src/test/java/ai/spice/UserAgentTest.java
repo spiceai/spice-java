@@ -33,7 +33,7 @@ public class UserAgentTest
         extends TestCase {
     public void testUserAgent() throws ExecutionException, InterruptedException {
         // use a regex to match the expected user agent
-        String regex = "spice-java \\d+\\.\\d+\\.\\d+ \\((Linux|Windows|Darwin)/[\\d\\w\\.\\-\\_]+ (x86_64|aarch64|i386)\\)";
+        String regex = "spice-java/\\d+\\.\\d+\\.\\d+ \\((Linux|Windows|Darwin)/[\\d\\w\\.\\-\\_]+ (x86_64|aarch64|i386)\\)";
         Pattern pattern = Pattern.compile(regex);
 
         String userAgent = Config.getUserAgent();
