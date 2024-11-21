@@ -34,6 +34,7 @@ public class SpiceClientBuilder {
 
     private String appId;
     private String apiKey;
+    private String userAgent;
     private URI flightAddress;
     private URI httpAddress;
     private int maxRetries = 3;
@@ -99,6 +100,20 @@ public class SpiceClientBuilder {
     }
 
     /**
+     * Sets the client's custom User-Agent string
+     * 
+     * @param userAgent The User-Agent string
+     * @return The current instance of SpiceClientBuilder for method chaining.
+     */
+    public SpiceClientBuilder withUserAgent(String userAgent) {
+        if (Strings.isNullOrEmpty(userAgent)) {
+            throw new IllegalArgumentException("userAgent can't be null or empty");
+        }
+        this.userAgent = userAgent;
+        return this;
+    }
+
+    /**
      * Sets the client's flight address to default Spice Cloud address.
      *
      * @return The current instance of SpiceClientBuilder for method chaining.
@@ -130,6 +145,6 @@ public class SpiceClientBuilder {
      * @return The SpiceClient instance
      */
     public SpiceClient build() {
-        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries);
+        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent);
     }
 }

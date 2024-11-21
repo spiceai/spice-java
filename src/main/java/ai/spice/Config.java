@@ -123,7 +123,7 @@ public class Config {
             osVersion = osVersion.split(" ")[0];
         }
 
-        return "spice-java " + Version.SPICE_JAVA_VERSION + " (" + osName + "/"
+        return "spice-java/" + Version.SPICE_JAVA_VERSION + " (" + osName + "/"
                 + System.getProperty("os.version") + " "
                 + osArch + ")";
     }
