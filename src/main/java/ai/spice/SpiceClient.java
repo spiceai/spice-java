@@ -121,7 +121,8 @@ public class SpiceClient implements AutoCloseable {
         if (Strings.isNullOrEmpty(userAgent)) {
             uaString = Config.getUserAgent();
         } else {
-            uaString = userAgent;
+            // Prepend the user-supplied user agent string with the Spice.ai user agent
+            uaString = userAgent + " " + Config.getUserAgent();
         }
         headers.put("User-Agent", uaString);
 
