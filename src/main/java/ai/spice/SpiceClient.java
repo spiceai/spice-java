@@ -156,6 +156,11 @@ public class SpiceClient implements AutoCloseable {
         } catch (RetryException e) {
             Throwable err = e.getLastFailedAttempt().getExceptionCause();
             throw new ExecutionException("Failed to execute query due to error: " + err.toString(), err);
+        } catch (ExecutionException e) {
+            if (isUnsupportedProtobufVersionException(e.getCause())) {
+                throw new ExecutionException("Unsupported protobuf version has been detected. Please upgrade 'com.google.protobuf' dependency to version 3.25.x or later.", e);
+            }
+            throw e;
         }
     }
 
@@ -262,5 +267,13 @@ public class SpiceClient implements AutoCloseable {
     @Override
     public void close() throws Exception {
         this.flightClient.close();
+    }
+
+    private boolean isUnsupportedProtobufVersionException(Throwable cause) {
+        if (cause instanceof ArrayIndexOutOfBoundsException) {
+            String message = cause.getMessage();
+            return message != null && message.contains("Index 2 out of bounds for length 2");
+        }
+        return false;
     }
 }
