@@ -124,11 +124,11 @@ handle other errors, for example RESOURCE_EXHAUSTED (HTTP 429).
 
 ### Memory Configuration
 
-The `SpiceClient` uses an Arrow `RootAllocator` for managing off-heap memory. By default, it limits memory to 50% of the JVM's maximum heap size or 1GB, whichever is lower. To prevent OOM issues in constrained environments, you can limit the maximum memory:
+The `SpiceClient` uses an Arrow `RootAllocator` for managing off-heap memory. By default, it uses all available memory. You can configure the memory limit using megabytes:
 
 ```java
 SpiceClient client = SpiceClient.builder()
-    .withMaxMemory(1024 * 1024 * 1024L) // 1GB limit
+    .withMemoryLimitMB(1024) // 1GB limit
     .build();
 ```
 

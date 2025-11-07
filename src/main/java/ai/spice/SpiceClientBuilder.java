@@ -26,8 +26,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 
 import com.google.common.base.Strings;
-import oshi.SystemInfo;
-import oshi.hardware.GlobalMemory;
 
 /**
  * Builder class for creating instances of SpiceClient.
@@ -40,33 +38,7 @@ public class SpiceClientBuilder {
     private URI flightAddress;
     private URI httpAddress;
     private int maxRetries = 3;
-    private long maxMemory = Long.MAX_VALUE;
-
-    /**
-     * Calculates the default maximum memory for the Arrow RootAllocator.
-     * Returns 50% of the system's total physical memory or 1GB, whichever is lower.
-     * Falls back to JVM heap size if system memory cannot be determined.
-     *
-     * @return the default maximum memory in bytes.
-     */
-    private static long calculateDefaultMaxMemory() {
-        long oneGB = 1024L * 1024 * 1024;
-        try {
-            SystemInfo systemInfo = new SystemInfo();
-            GlobalMemory memory = systemInfo.getHardware().getMemory();
-            long totalMemory = memory.getTotal();
-            if (totalMemory > 0) {
-                long halfMemory = totalMemory / 2;
-                return Math.min(halfMemory, oneGB);
-            }
-        } catch (Exception e) {
-            // Fallback to JVM heap if OSHI fails
-        }
-
-        long jvmMaxMemory = Runtime.getRuntime().maxMemory();
-        long halfMemory = jvmMaxMemory / 2;
-        return Math.min(halfMemory, oneGB);
-    }
+    private long memoryLimitMB = Long.MAX_VALUE; // Default is all available memory.
 
     /**
      * Constructs a new SpiceClientBuilder instance
@@ -76,7 +48,6 @@ public class SpiceClientBuilder {
     SpiceClientBuilder() throws URISyntaxException {
         this.flightAddress = Config.getLocalFlightAddressUri();
         this.httpAddress = Config.getLocalHttpAddressUri();
-        this.maxMemory = calculateDefaultMaxMemory();
     }
 
     /**
@@ -170,16 +141,22 @@ public class SpiceClientBuilder {
     }
 
     /**
-     * Sets the maximum memory allocation for the Arrow RootAllocator.
+     * Sets the memory limit for Apache Arrow allocator in megabytes.
+     * This controls the maximum amount of off-heap memory that can be allocated
+     * for Arrow Flight operations. If not set, the allocator will use all available memory.
      *
-     * @param maxMemory The maximum memory in bytes for the RootAllocator (must be > 0)
+     * @param memoryLimitMB Maximum memory limit in megabytes. Default is all available memory.
+     *                      Must be positive.
      * @return The current instance of SpiceClientBuilder for method chaining.
+     * @throws IllegalArgumentException if memoryLimitMB is not positive
+     *
+     * @see org.apache.arrow.memory.RootAllocator
      */
-    public SpiceClientBuilder withMaxMemory(long maxMemory) {
-        if (maxMemory <= 0) {
-            throw new IllegalArgumentException("maxMemory must be greater than 0");
+    public SpiceClientBuilder withMemoryLimitMB(long memoryLimitMB) {
+        if (memoryLimitMB <= 0) {
+            throw new IllegalArgumentException("Memory limit must be positive, got: " + memoryLimitMB + " MB");
         }
-        this.maxMemory = maxMemory;
+        this.memoryLimitMB = memoryLimitMB;
         return this;
     }
 
@@ -189,6 +166,6 @@ public class SpiceClientBuilder {
      * @return The SpiceClient instance
      */
     public SpiceClient build() {
-        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, maxMemory);
+        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB);
     }
 }
