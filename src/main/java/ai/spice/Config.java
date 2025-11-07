@@ -94,6 +94,27 @@ public class Config {
     }
 
     /**
+     * Returns the maximum memory allocation for the Arrow RootAllocator from the
+     * SPICE_MAX_MEMORY environment variable.
+     *
+     * @return the maximum memory in bytes, or Long.MAX_VALUE if not set or invalid.
+     */
+    public static long getMaxMemory() {
+        String maxMemoryStr = System.getenv("SPICE_MAX_MEMORY");
+        if (maxMemoryStr != null && !maxMemoryStr.isEmpty()) {
+            try {
+                long maxMemory = Long.parseLong(maxMemoryStr);
+                if (maxMemory > 0) {
+                    return maxMemory;
+                }
+            } catch (NumberFormatException e) {
+                // Invalid value, fall back to default
+            }
+        }
+        return Long.MAX_VALUE;
+    }
+
+    /**
      * Returns the Spice SDK user agent for this system, including the package
      * version, system OS, version and arch.
      * 

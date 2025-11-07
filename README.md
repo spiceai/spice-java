@@ -122,6 +122,18 @@ SpiceClient client = SpiceClient.builder()
 Retries are performed for connection and system internal errors. It is the SDK user's responsibility to properly
 handle other errors, for example RESOURCE_EXHAUSTED (HTTP 429).
 
+### Memory Configuration
+
+The `SpiceClient` uses an Arrow `RootAllocator` for managing off-heap memory. By default, it allows unlimited memory allocation. To prevent OOM issues in constrained environments, you can limit the maximum memory:
+
+```java
+SpiceClient client = SpiceClient.builder()
+    .withMaxMemory(1024 * 1024 * 1024L) // 1GB limit
+    .build();
+```
+
+You can also set the limit via the `SPICE_MAX_MEMORY` environment variable (in bytes). If both are provided, the builder method takes precedence.
+
 ### Spice.ai Runtime commands
 
 #### Accelerated dataset refresh

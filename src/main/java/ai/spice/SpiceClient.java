@@ -91,8 +91,10 @@ public class SpiceClient implements AutoCloseable {
      * @param httpAddress   the URI of the Spice.ai runtime HTTP address
      * 
      * @param maxRetries    the maximum number of connection retries for the client
+     * @param userAgent     the user agent string
+     * @param maxMemory     the maximum memory allocation for the Arrow RootAllocator
      */
-    public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries, String userAgent) {
+    public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries, String userAgent, long maxMemory) {
         this.appId = appId;
         this.apiKey = apiKey;
         this.maxRetries = maxRetries;
@@ -108,7 +110,7 @@ public class SpiceClient implements AutoCloseable {
             this.flightAddress = flightAddress;
         }
 
-        Builder builder = FlightClient.builder(new RootAllocator(Long.MAX_VALUE), new Location(this.flightAddress));
+        Builder builder = FlightClient.builder(new RootAllocator(maxMemory), new Location(this.flightAddress));
 
         if (Strings.isNullOrEmpty(apiKey)) {
             this.flightClient = new FlightSqlClient(builder.build());

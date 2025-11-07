@@ -38,6 +38,7 @@ public class SpiceClientBuilder {
     private URI flightAddress;
     private URI httpAddress;
     private int maxRetries = 3;
+    private long maxMemory = Long.MAX_VALUE;
 
     /**
      * Constructs a new SpiceClientBuilder instance
@@ -47,6 +48,7 @@ public class SpiceClientBuilder {
     SpiceClientBuilder() throws URISyntaxException {
         this.flightAddress = Config.getLocalFlightAddressUri();
         this.httpAddress = Config.getLocalHttpAddressUri();
+        this.maxMemory = Config.getMaxMemory();
     }
 
     /**
@@ -140,11 +142,25 @@ public class SpiceClientBuilder {
     }
 
     /**
+     * Sets the maximum memory allocation for the Arrow RootAllocator.
+     *
+     * @param maxMemory The maximum memory in bytes for the RootAllocator (must be > 0)
+     * @return The current instance of SpiceClientBuilder for method chaining.
+     */
+    public SpiceClientBuilder withMaxMemory(long maxMemory) {
+        if (maxMemory <= 0) {
+            throw new IllegalArgumentException("maxMemory must be greater than 0");
+        }
+        this.maxMemory = maxMemory;
+        return this;
+    }
+
+    /**
      * Creates SpiceClient with provided parameters.
      *
      * @return The SpiceClient instance
      */
     public SpiceClient build() {
-        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent);
+        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, maxMemory);
     }
 }
