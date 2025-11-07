@@ -213,7 +213,7 @@ public class SpiceClient implements AutoCloseable {
 
                 builder = builder.POST(HttpRequest.BodyPublishers.ofString(json));
             } else {
-                builder = builder.POST(HttpRequest.BodyPublishers.noBody());
+                builder = builder.POST(HttpRequest.BodyPublishers.ofString("{}"));
             }
 
             HttpRequest request = builder.build();
