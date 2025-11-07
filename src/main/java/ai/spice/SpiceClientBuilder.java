@@ -26,6 +26,8 @@ import java.net.URI;
 import java.net.URISyntaxException;
 
 import com.google.common.base.Strings;
+import oshi.SystemInfo;
+import oshi.hardware.GlobalMemory;
 
 /**
  * Builder class for creating instances of SpiceClient.
@@ -42,14 +44,27 @@ public class SpiceClientBuilder {
 
     /**
      * Calculates the default maximum memory for the Arrow RootAllocator.
-     * Returns 50% of the JVM's maximum heap size or 1GB, whichever is lower.
+     * Returns 50% of the system's total physical memory or 1GB, whichever is lower.
+     * Falls back to JVM heap size if system memory cannot be determined.
      *
      * @return the default maximum memory in bytes.
      */
     private static long calculateDefaultMaxMemory() {
+        long oneGB = 1024L * 1024 * 1024;
+        try {
+            SystemInfo systemInfo = new SystemInfo();
+            GlobalMemory memory = systemInfo.getHardware().getMemory();
+            long totalMemory = memory.getTotal();
+            if (totalMemory > 0) {
+                long halfMemory = totalMemory / 2;
+                return Math.min(halfMemory, oneGB);
+            }
+        } catch (Exception e) {
+            // Fallback to JVM heap if OSHI fails
+        }
+
         long jvmMaxMemory = Runtime.getRuntime().maxMemory();
         long halfMemory = jvmMaxMemory / 2;
-        long oneGB = 1024L * 1024 * 1024;
         return Math.min(halfMemory, oneGB);
     }
 
