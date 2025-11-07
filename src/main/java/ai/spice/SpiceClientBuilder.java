@@ -143,19 +143,26 @@ public class SpiceClientBuilder {
     /**
      * Sets the memory limit for Apache Arrow allocator in megabytes.
      * This controls the maximum amount of off-heap memory that can be allocated
-     * for Arrow Flight operations. If not set, the allocator will use all available memory.
+     * for Arrow Flight operations. If not set, the allocator will use all available
+     * memory.
      *
-     * @param memoryLimitMB Maximum memory limit in megabytes. Default is all available memory.
+     * @param memoryLimitMB Maximum memory limit in megabytes. Default is all
+     *                      available memory.
      *                      Must be positive.
      * @return The current instance of SpiceClientBuilder for method chaining.
      * @throws IllegalArgumentException if memoryLimitMB is not positive
      *
      * @see org.apache.arrow.memory.RootAllocator
      */
-    public SpiceClientBuilder withMemoryLimitMB(long memoryLimitMB) {
+    public SpiceClientBuilder withArrowMemoryLimitMB(long memoryLimitMB) {
         if (memoryLimitMB <= 0) {
             throw new IllegalArgumentException("Memory limit must be positive, got: " + memoryLimitMB + " MB");
         }
+        if (memoryLimitMB > Long.MAX_VALUE / 1024L / 1024L) {
+            throw new IllegalArgumentException(
+                    "Memory limit is too large: " + memoryLimitMB + " MB");
+        }
+
         this.memoryLimitMB = memoryLimitMB;
         return this;
     }

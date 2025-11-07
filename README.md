@@ -128,7 +128,7 @@ The `SpiceClient` uses an Arrow `RootAllocator` for managing off-heap memory. By
 
 ```java
 SpiceClient client = SpiceClient.builder()
-    .withMemoryLimitMB(1024) // 1GB limit
+    .withArrowMemoryLimitMB(1024) // 1GB limit
     .build();
 ```
 
