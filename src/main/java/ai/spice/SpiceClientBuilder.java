@@ -41,6 +41,19 @@ public class SpiceClientBuilder {
     private long maxMemory = Long.MAX_VALUE;
 
     /**
+     * Calculates the default maximum memory for the Arrow RootAllocator.
+     * Returns 50% of the JVM's maximum heap size or 1GB, whichever is lower.
+     *
+     * @return the default maximum memory in bytes.
+     */
+    private static long calculateDefaultMaxMemory() {
+        long jvmMaxMemory = Runtime.getRuntime().maxMemory();
+        long halfMemory = jvmMaxMemory / 2;
+        long oneGB = 1024L * 1024 * 1024;
+        return Math.min(halfMemory, oneGB);
+    }
+
+    /**
      * Constructs a new SpiceClientBuilder instance
      *
      * @throws URISyntaxException if the URI syntax is incorrect.
@@ -48,7 +61,7 @@ public class SpiceClientBuilder {
     SpiceClientBuilder() throws URISyntaxException {
         this.flightAddress = Config.getLocalFlightAddressUri();
         this.httpAddress = Config.getLocalHttpAddressUri();
-        this.maxMemory = Config.getMaxMemory();
+        this.maxMemory = calculateDefaultMaxMemory();
     }
 
     /**
