@@ -100,16 +100,14 @@ public class Config {
      * @return the maximum memory in bytes, or Long.MAX_VALUE if not set or invalid.
      */
     public static long getMaxMemory() {
-        String maxMemoryStr = System.getenv("SPICE_MAX_MEMORY");
-        if (maxMemoryStr != null && !maxMemoryStr.isEmpty()) {
-            try {
-                long maxMemory = Long.parseLong(maxMemoryStr);
-                if (maxMemory > 0) {
-                    return maxMemory;
-                }
-            } catch (NumberFormatException e) {
-                // Invalid value, fall back to default
+        try {
+            String maxMemoryStr = System.getenv("SPICE_MAX_MEMORY");
+            long maxMemory = Long.parseLong(maxMemoryStr);
+            if (maxMemory > 0) {
+                return maxMemory;
             }
+        } catch (Exception e) {
+            // Any exception, fall back to default
         }
         return Long.MAX_VALUE;
     }
