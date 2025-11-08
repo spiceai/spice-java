@@ -46,7 +46,7 @@ public class FlightQueryTest
                     .withSpiceCloud()
                     .build();
 
-            String sql = "SELECT number, \"timestamp\", base_fee_per_gas, base_fee_per_gas / 1e9 AS base_fee_per_gas_gwei FROM eth.blocks limit 2000";
+            String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 10;";
             FlightStream res = spiceClient.query(sql);
 
             int totalRows = 0;
@@ -60,8 +60,8 @@ public class FlightQueryTest
                 totalRows += root.getRowCount();
             }
 
-            assertEquals("Expected column count does not match", 4, columnCount);
-            assertEquals("Expected row count does not match", 2000, totalRows);
+            assertEquals("Expected column count does not match", 3, columnCount);
+            assertEquals("Expected row count does not match", 10, totalRows);
 
         } catch (Exception e) {
             fail("Should not throw any exception: " + e.getMessage());
