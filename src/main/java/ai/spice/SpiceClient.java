@@ -91,6 +91,8 @@ public class SpiceClient implements AutoCloseable {
      * @param httpAddress   the URI of the Spice.ai runtime HTTP address
      * 
      * @param maxRetries    the maximum number of connection retries for the client
+     * 
+     * @param userAgent     the user agent string to include in requests
      */
     public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries, String userAgent) {
         this.appId = appId;
