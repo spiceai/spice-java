@@ -61,6 +61,8 @@ import org.apache.arrow.flight.sql.FlightSqlClient;
  */
 public class SpiceClient implements AutoCloseable {
 
+    private static final long BYTES_PER_MB = 1024L * 1024L;
+
     private String appId;
     private String apiKey;
     private URI flightAddress;
@@ -86,13 +88,19 @@ public class SpiceClient implements AutoCloseable {
      *                      application
      * @param apiKey        the API key used for authentication with Spice.ai
      *                      services
-     * @param flightAddress the URI of the flight address for connecting to Spice.ai
+     * @param flightAddress the URI of the flight address for connecting to
+     *                      Spice.ai
      *                      services
      * @param httpAddress   the URI of the Spice.ai runtime HTTP address
      * 
-     * @param maxRetries    the maximum number of connection retries for the client
+     * @param maxRetries    the maximum number of connection retries for the
+     *                      client
+     * @param userAgent     the user agent string
+     * @param memoryLimitMB the memory limit in megabytes for the Arrow
+     *                      RootAllocator
      */
-    public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries, String userAgent) {
+    public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries,
+            String userAgent, long memoryLimitMB) {
         this.appId = appId;
         this.apiKey = apiKey;
         this.maxRetries = maxRetries;
@@ -108,7 +116,12 @@ public class SpiceClient implements AutoCloseable {
             this.flightAddress = flightAddress;
         }
 
-        Builder builder = FlightClient.builder(new RootAllocator(Long.MAX_VALUE), new Location(this.flightAddress));
+        // Convert megabytes to bytes for RootAllocator:
+        // https://arrow.apache.org/java/main/reference/org.apache.arrow.memory.core/org/apache/arrow/memory/RootAllocator.html
+        long memoryLimitBytes = (memoryLimitMB > Long.MAX_VALUE / BYTES_PER_MB)
+                ? Long.MAX_VALUE
+                : memoryLimitMB * BYTES_PER_MB;
+        Builder builder = FlightClient.builder(new RootAllocator(memoryLimitBytes), new Location(this.flightAddress));
 
         if (Strings.isNullOrEmpty(apiKey)) {
             this.flightClient = new FlightSqlClient(builder.build());
