@@ -35,6 +35,7 @@ assignees: ''
 - [ ] Create a new branch `release-v[semver]` for the release from trunk. E.g. `release-v0.17.0-beta`
 - [ ] Release the new version by creating and publishing a latest [GitHub Release](https://github.com/spiceai/spice-java/releases/new) with the tag from the release branch. E.g. `v0.17.0-beta`.
 - [ ] Ensure the [publish](https://github.com/spiceai/spice-java/actions/workflows/publish.yml) workflow has triggered, and successfully published the package.
+- [ ] [Publish](https://central.sonatype.com/publishing) and [verify](https://central.sonatype.com/artifact/ai.spice/spiceai/versions) package in Maven Central Repository
 - [ ] Run a test pass using the [`spice-java` sample](https://github.com/spiceai/samples/tree/trunk/client-sdk/spice-java-sdk-sample) using the latest published version.
 - [ ] Update `Version.java` and version in `pom.xml` to the next release version.
 - [ ] The SDK release is added to the next [Spice release notes](https://github.com/spiceai/spiceai/tree/trunk/docs/release_notes)
