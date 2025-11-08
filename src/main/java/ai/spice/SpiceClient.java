@@ -95,8 +95,8 @@ public class SpiceClient implements AutoCloseable {
      * 
      * @param maxRetries    the maximum number of connection retries for the client
      * 
-     * @param userAgent     the user agent string to include in requests
-     *                      client
+     * @param userAgent     the user agent strings
+     * 
      * @param memoryLimitMB the memory limit in megabytes for the Arrow
      *                      RootAllocator
      */
