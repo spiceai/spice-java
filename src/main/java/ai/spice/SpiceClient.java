@@ -93,10 +93,9 @@ public class SpiceClient implements AutoCloseable {
      *                      services
      * @param httpAddress   the URI of the Spice.ai runtime HTTP address
      * 
-     * @param maxRetries    the maximum number of connection retries for the client
-     * 
+     * @param maxRetries    the maximum number of connection retries for the
+     *                      client
      * @param userAgent     the user agent string
-     * 
      * @param memoryLimitMB the memory limit in megabytes for the Arrow
      *                      RootAllocator
      */
