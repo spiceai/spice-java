@@ -41,20 +41,14 @@ jobs:
       if: matrix.os == 'windows-latest'
       run: mvn --% install -DskipTests=true -Dgpg.skip -B -V # tell powershell to stop parsing with --% so it doesn't error with "Unknown lifecycle phase .skip"
     
-    - name: Install Spice (https://install.spiceai.org) (Linux)
-      if: matrix.os == 'ubuntu-latest'
+    - name: Install Spice (https://install.spiceai.org) (Unix)
+      if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         curl https://install.spiceai.org | /bin/bash
         echo "$HOME/.spice/bin" >> $GITHUB_PATH
         $HOME/.spice/bin/spice install
-    
-    - name: Install Spice (https://install.spiceai.org) (MacOS)
-      if: matrix.os == 'macos-latest'
-      run: |
-        brew install spiceai/spiceai/spice
-        brew install spiceai/spiceai/spiced
 
     - name: install Spice (Windows)
       if: matrix.os == 'windows-latest'
