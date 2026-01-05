@@ -273,7 +273,6 @@ public class SpiceClient implements AutoCloseable {
                 .withStopStrategy(StopStrategies.stopAfterAttempt(this.maxRetries + 1))
                 .build();
     }
-    }
 
     /**
      * Executes a sql query
@@ -420,7 +419,7 @@ public class SpiceClient implements AutoCloseable {
      * Internal implementation of parameterized query execution.
      */
     private ArrowReader queryWithParamsInternal(String sql, Object... params)
-            throws AdbcException, RetryException {
+            throws AdbcException, RetryException, ExecutionException {
         return adbcRetryer.call(() -> executeParameterizedQuery(sql, params));
     }
 
