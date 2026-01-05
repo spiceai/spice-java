@@ -40,64 +40,64 @@ ArrowReader reader = client.queryWithParams(
 
 ### Primitive Integer Types
 
-| Java Type | Arrow Type | Helper Method | Auto-Inferred |
-| --------- | ---------- | ------------- | ------------- |
-| `byte` | Int8 | `Param.int8(v)` | ✅ |
-| `short` | Int16 | `Param.int16(v)` | ✅ |
-| `int` | Int32 | `Param.int32(v)` | ✅ |
-| `long` | Int64 | `Param.int64(v)` | ✅ |
+| Java Type | Arrow Type | Helper Method    | Auto-Inferred |
+| --------- | ---------- | ---------------- | ------------- |
+| `byte`    | Int8       | `Param.int8(v)`  | ✅             |
+| `short`   | Int16      | `Param.int16(v)` | ✅             |
+| `int`     | Int32      | `Param.int32(v)` | ✅             |
+| `long`    | Int64      | `Param.int64(v)` | ✅             |
 
 ### Unsigned Integer Types
 
-| Java Type | Arrow Type | Helper Method | Auto-Inferred |
-| --------- | ---------- | ------------- | ------------- |
-| `short` | Uint8 | `Param.uint8(v)` | ❌ |
-| `int` | Uint16 | `Param.uint16(v)` | ❌ |
-| `long` | Uint32 | `Param.uint32(v)` | ❌ |
-| `long` | Uint64 | `Param.uint64(v)` | ❌ |
+| Java Type | Arrow Type | Helper Method     | Auto-Inferred |
+| --------- | ---------- | ----------------- | ------------- |
+| `short`   | Uint8      | `Param.uint8(v)`  | ❌             |
+| `int`     | Uint16     | `Param.uint16(v)` | ❌             |
+| `long`    | Uint32     | `Param.uint32(v)` | ❌             |
+| `long`    | Uint64     | `Param.uint64(v)` | ❌             |
 
 ### Floating Point Types
 
-| Java Type | Arrow Type | Helper Method | Auto-Inferred |
-| --------- | ---------- | ------------- | ------------- |
-| `short` (bits) | Float16 | `Param.float16(v)` | ❌ |
-| `float` | Float32 | `Param.float32(v)` | ✅ |
-| `double` | Float64 | `Param.float64(v)` | ✅ |
+| Java Type      | Arrow Type | Helper Method      | Auto-Inferred |
+| -------------- | ---------- | ------------------ | ------------- |
+| `short` (bits) | Float16    | `Param.float16(v)` | ❌             |
+| `float`        | Float32    | `Param.float32(v)` | ✅             |
+| `double`       | Float64    | `Param.float64(v)` | ✅             |
 
 ### String and Binary Types
 
-| Java Type | Arrow Type | Helper Method | Auto-Inferred |
-| --------- | ---------- | ------------- | ------------- |
-| `String` | Utf8 | `Param.string(v)` | ✅ |
-| `String` | LargeUtf8 | `Param.largeString(v)` | ❌ |
-| `byte[]` | Binary | `Param.binary(v)` | ✅ |
-| `byte[]` | LargeBinary | `Param.largeBinary(v)` | ❌ |
-| `byte[]` | FixedSizeBinary | `Param.fixedSizeBinary(v, width)` | ❌ |
-| `boolean` | Bool | `Param.bool(v)` | ✅ |
+| Java Type | Arrow Type      | Helper Method                     | Auto-Inferred |
+| --------- | --------------- | --------------------------------- | ------------- |
+| `String`  | Utf8            | `Param.string(v)`                 | ✅             |
+| `String`  | LargeUtf8       | `Param.largeString(v)`            | ❌             |
+| `byte[]`  | Binary          | `Param.binary(v)`                 | ✅             |
+| `byte[]`  | LargeBinary     | `Param.largeBinary(v)`            | ❌             |
+| `byte[]`  | FixedSizeBinary | `Param.fixedSizeBinary(v, width)` | ❌             |
+| `boolean` | Bool            | `Param.bool(v)`                   | ✅             |
 
 ### Temporal Types
 
-| Java Type | Arrow Type | Helper Method | Auto-Inferred |
-| --------- | ---------- | ------------- | ------------- |
-| `LocalDate` | Date32 | `Param.date32(v)` | ✅ |
-| `LocalDate` | Date64 | `Param.date64(v)` | ❌ |
-| `LocalTime` | Time32 | `Param.time32(v, unit)` | ❌ |
-| `LocalTime` | Time64 | `Param.time64(v, unit)` | ✅ (microseconds) |
-| `LocalDateTime` | Timestamp | `Param.timestamp(v, unit, tz)` | ✅ (microseconds, UTC) |
-| `Duration` | Duration | `Param.duration(v, unit)` | ✅ (microseconds) |
+| Java Type       | Arrow Type | Helper Method                  | Auto-Inferred         |
+| --------------- | ---------- | ------------------------------ | --------------------- |
+| `LocalDate`     | Date32     | `Param.date32(v)`              | ✅                     |
+| `LocalDate`     | Date64     | `Param.date64(v)`              | ❌                     |
+| `LocalTime`     | Time32     | `Param.time32(v, unit)`        | ❌                     |
+| `LocalTime`     | Time64     | `Param.time64(v, unit)`        | ✅ (microseconds)      |
+| `LocalDateTime` | Timestamp  | `Param.timestamp(v, unit, tz)` | ✅ (microseconds, UTC) |
+| `Duration`      | Duration   | `Param.duration(v, unit)`      | ✅ (microseconds)      |
 
 ### Decimal Types
 
-| Java Type | Arrow Type | Helper Method | Auto-Inferred |
-| --------- | ---------- | ------------- | ------------- |
-| `BigDecimal` | Decimal128 | `Param.decimal128(v, precision, scale)` | ✅ |
-| `BigDecimal` | Decimal256 | `Param.decimal256(v, precision, scale)` | ❌ |
+| Java Type    | Arrow Type | Helper Method                           | Auto-Inferred |
+| ------------ | ---------- | --------------------------------------- | ------------- |
+| `BigDecimal` | Decimal128 | `Param.decimal128(v, precision, scale)` | ✅             |
+| `BigDecimal` | Decimal256 | `Param.decimal256(v, precision, scale)` | ❌             |
 
 ### Special Types
 
-| Java Type | Arrow Type | Helper Method | Auto-Inferred |
-| --------- | ---------- | ------------- | ------------- |
-| `null` | Null | `Param.nullValue()` | ✅ |
+| Java Type | Arrow Type | Helper Method       | Auto-Inferred |
+| --------- | ---------- | ------------------- | ------------- |
+| `null`    | Null       | `Param.nullValue()` | ✅             |
 
 ## API Methods
 

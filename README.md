@@ -37,11 +37,11 @@ mvn package -Dmaven.test.skip=true
 
 This library supports the following Java implementations:
 
-| Distribution | Versions |
-| ------------ | -------- |
-| OpenJDK (Microsoft Build) | 11, 17, 21 (LTS) |
-| OpenJDK (Eclipse Temurin) | 21 (LTS), 23, 24 |
-| Oracle JDK | 17, 21 (LTS), 23, 24, 25 (LTS) |
+| Distribution              | Versions                       |
+| ------------------------- | ------------------------------ |
+| OpenJDK (Microsoft Build) | 11, 17, 21 (LTS)               |
+| OpenJDK (Eclipse Temurin) | 21 (LTS), 23, 24               |
+| Oracle JDK                | 17, 21 (LTS), 23, 24, 25 (LTS) |
 
 ## Usage
 
