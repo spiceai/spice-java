@@ -213,6 +213,69 @@ SpiceClient client = SpiceClient.builder()
     .build();
 ```
 
+### Iterating Through Results
+
+For more control over query results, you can iterate through rows and access individual field values:
+
+```java
+import org.apache.arrow.flight.FlightStream;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float8Vector;
+import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.Field;
+
+try (SpiceClient client = SpiceClient.builder().build()) {
+    FlightStream stream = client.query("SELECT * FROM taxi_trips LIMIT 10;");
+
+    while (stream.next()) {
+        try (VectorSchemaRoot root = stream.getRoot()) {
+            int rowCount = root.getRowCount();
+
+            // Print column names and types
+            for (Field field : root.getSchema().getFields()) {
+                System.out.printf("Column: %s, Type: %s%n", field.getName(), field.getType());
+            }
+
+            // Iterate through rows generically
+            for (int row = 0; row < rowCount; row++) {
+                for (FieldVector vector : root.getFieldVectors()) {
+                    String columnName = vector.getName();
+                    Object value = vector.isNull(row) ? null : vector.getObject(row);
+                    System.out.printf("%s = %s%n", columnName, value);
+                }
+            }
+
+            // Access specific columns with type safety
+            FieldVector fareVector = root.getVector("fare_amount");
+            if (fareVector instanceof Float8Vector) {
+                Float8Vector fareVec = (Float8Vector) fareVector;
+                for (int row = 0; row < rowCount; row++) {
+                    if (!fareVec.isNull(row)) {
+                        double fare = fareVec.get(row);
+                        System.out.printf("Fare: $%.2f%n", fare);
+                    }
+                }
+            }
+
+            // Access string columns
+            FieldVector vendorVector = root.getVector("vendor_id");
+            if (vendorVector instanceof VarCharVector) {
+                VarCharVector strVec = (VarCharVector) vendorVector;
+                for (int row = 0; row < rowCount; row++) {
+                    if (!strVec.isNull(row)) {
+                        String vendorId = new String(strVec.get(row), java.nio.charset.StandardCharsets.UTF_8);
+                        System.out.printf("Vendor: %s%n", vendorId);
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+See [ExampleIteratingResults.java](/src/main/java/ai/spice/example/ExampleIteratingResults.java) for a comprehensive example.
+
 ### Spice.ai Runtime commands
 
 #### Accelerated dataset refresh
@@ -226,6 +289,40 @@ SpiceClient client = SpiceClient.builder()
 
 client.refresh("taxi_trips")
 
+```
+
+### Logging
+
+The SDK uses SLF4J for logging, allowing you to plug in your preferred logging implementation (Logback, Log4j2, java.util.logging, etc.).
+
+**Adding a logging implementation (Maven):**
+
+```xml
+<!-- Using Logback -->
+<dependency>
+    <groupId>ch.qos.logback</groupId>
+    <artifactId>logback-classic</artifactId>
+    <version>1.5.18</version>
+</dependency>
+
+<!-- Or using SLF4J Simple (console output) -->
+<dependency>
+    <groupId>org.slf4j</groupId>
+    <artifactId>slf4j-simple</artifactId>
+    <version>2.0.17</version>
+</dependency>
+```
+
+**Log levels used:**
+
+- `DEBUG` - Client initialization, query execution, connection lifecycle
+- `WARN` - Recoverable errors during resource cleanup
+- `ERROR` - Query failures, connection errors
+
+To enable debug logging with `slf4j-simple`, set the system property:
+
+```bash
+-Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 ```
 
 ## 🤝 Connect with us

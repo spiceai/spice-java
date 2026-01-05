@@ -112,6 +112,8 @@ import com.google.common.base.Strings;
 import com.google.gson.Gson;
 
 import org.apache.arrow.flight.sql.FlightSqlClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Client to execute SQL queries against Spice.ai Cloud and Spice.ai OSS.
@@ -119,6 +121,8 @@ import org.apache.arrow.flight.sql.FlightSqlClient;
  */
 public class SpiceClient implements AutoCloseable {
 
+    private static final Logger logger = LoggerFactory.getLogger(SpiceClient.class);
+    
     private static final long BYTES_PER_MB = 1024L * 1024L;
     
     // Cached Gson instance for JSON serialization (thread-safe)
@@ -210,6 +214,7 @@ public class SpiceClient implements AutoCloseable {
         if (Strings.isNullOrEmpty(apiKey)) {
             this.flightClient = new FlightSqlClient(builder.build());
             initRetryers();
+            logger.debug("SpiceClient initialized (unauthenticated) - flightAddress={}", this.flightAddress);
             return;
         }
 
@@ -238,6 +243,8 @@ public class SpiceClient implements AutoCloseable {
         
         // Initialize cached retryers (immutable, built once)
         initRetryers();
+        
+        logger.debug("SpiceClient initialized (authenticated) - flightAddress={}, appId={}", this.flightAddress, this.appId);
     }
     
     /**
@@ -286,10 +293,14 @@ public class SpiceClient implements AutoCloseable {
             throw new IllegalArgumentException("No SQL query provided");
         }
 
+        logger.debug("Executing query: {}", sql);
         try {
-            return this.queryInternalWithRetry(sql);
+            FlightStream result = this.queryInternalWithRetry(sql);
+            logger.debug("Query executed successfully");
+            return result;
         } catch (RetryException e) {
             Throwable err = e.getLastFailedAttempt().getExceptionCause();
+            logger.error("Query failed after {} attempts: {}", e.getNumberOfFailedAttempts(), err.getMessage());
             throw new ExecutionException("Failed to execute query due to error: " + err.toString(), err);
         }
     }
@@ -339,13 +350,18 @@ public class SpiceClient implements AutoCloseable {
             throw new IllegalArgumentException("No SQL query provided");
         }
 
+        logger.debug("Executing parameterized query with {} parameters: {}", params != null ? params.length : 0, sql);
         try {
             initADBCIfNeeded();
-            return queryWithParamsInternal(sql, params);
+            ArrowReader result = queryWithParamsInternal(sql, params);
+            logger.debug("Parameterized query executed successfully");
+            return result;
         } catch (AdbcException e) {
+            logger.error("Parameterized query failed: {}", e.getMessage());
             throw new ExecutionException("Failed to execute parameterized query: " + e.getMessage(), e);
         } catch (RetryException e) {
             Throwable err = e.getLastFailedAttempt().getExceptionCause();
+            logger.error("Parameterized query failed after {} attempts: {}", e.getNumberOfFailedAttempts(), err.getMessage());
             throw new ExecutionException("Failed to execute parameterized query due to error: " + err.toString(), err);
         }
     }
@@ -359,6 +375,8 @@ public class SpiceClient implements AutoCloseable {
             return;
         }
 
+        logger.debug("Initializing ADBC connection");
+        
         // Format the URI for ADBC FlightSQL driver
         String uri = this.flightAddress.toString();
 
@@ -391,6 +409,8 @@ public class SpiceClient implements AutoCloseable {
         FlightSqlDriver driver = new FlightSqlDriver(allocator);
         adbcDatabase = driver.open(options);
         adbcConnection = adbcDatabase.connect();
+        
+        logger.debug("ADBC connection established - uri={}", uri);
     }
 
     /**
@@ -400,16 +420,18 @@ public class SpiceClient implements AutoCloseable {
         if (adbcConnection != null) {
             try {
                 adbcConnection.close();
+                logger.debug("ADBC connection closed");
             } catch (Exception e) {
-                // Log but don't fail
+                logger.warn("Error closing ADBC connection: {}", e.getMessage());
             }
             adbcConnection = null;
         }
         if (adbcDatabase != null) {
             try {
                 adbcDatabase.close();
+                logger.debug("ADBC database closed");
             } catch (Exception e) {
-                // Log but don't fail
+                logger.warn("Error closing ADBC database: {}", e.getMessage());
             }
             adbcDatabase = null;
         }
@@ -787,6 +809,7 @@ public class SpiceClient implements AutoCloseable {
             throw new IllegalArgumentException("No dataset name provided");
         }
 
+        logger.debug("Refreshing dataset: {}", dataset);
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(new URI(String.format("%s/v1/datasets/%s/acceleration/refresh", this.httpAddress, dataset)))
@@ -804,19 +827,23 @@ public class SpiceClient implements AutoCloseable {
             HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 201) {
+                logger.error("Dataset refresh failed - dataset={}, statusCode={}, response={}", dataset, response.statusCode(), response.body());
                 throw new ExecutionException(
                         String.format("Failed to trigger dataset refresh. Status Code: %d, Response: %s",
                                 response.statusCode(),
                                 response.body()),
                         null);
             }
+            logger.debug("Dataset refresh triggered successfully: {}", dataset);
         } catch (ExecutionException e) {
             // no need to wrap ExecutionException
             throw e;
         } catch (ConnectException err) {
+            logger.error("Cannot connect to Spice runtime at {}: {}", this.httpAddress, err.getMessage());
             throw new ExecutionException(
                     String.format("The Spice runtime is unavailable at %s. Is it running?", this.httpAddress), err);
         } catch (Exception err) {
+            logger.error("Dataset refresh failed: {}", err.getMessage());
             throw new ExecutionException("Failed to trigger dataset refresh due to error: " + err.toString(), err);
         }
     }
@@ -845,19 +872,23 @@ public class SpiceClient implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
+        logger.debug("Closing SpiceClient");
         List<Exception> exceptions = new ArrayList<>();
 
         // Close ADBC resources first
         try {
             closeADBC();
         } catch (Exception e) {
+            logger.warn("Error during ADBC cleanup: {}", e.getMessage());
             exceptions.add(e);
         }
 
         // Close Flight client
         try {
             this.flightClient.close();
+            logger.debug("Flight client closed");
         } catch (Exception e) {
+            logger.warn("Error closing Flight client: {}", e.getMessage());
             exceptions.add(e);
         }
 
@@ -865,8 +896,10 @@ public class SpiceClient implements AutoCloseable {
         try {
             if (this.allocator != null) {
                 this.allocator.close();
+                logger.debug("Arrow allocator closed");
             }
         } catch (Exception e) {
+            logger.warn("Error closing Arrow allocator: {}", e.getMessage());
             exceptions.add(e);
         }
 
@@ -875,7 +908,10 @@ public class SpiceClient implements AutoCloseable {
             for (int i = 1; i < exceptions.size(); i++) {
                 first.addSuppressed(exceptions.get(i));
             }
+            logger.error("SpiceClient closed with {} error(s)", exceptions.size());
             throw first;
         }
+        
+        logger.debug("SpiceClient closed successfully");
     }
 }
