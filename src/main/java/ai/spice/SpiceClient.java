@@ -22,16 +22,30 @@ SOFTWARE.
 
 package ai.spice;
 
+import java.math.BigDecimal;
 import java.net.ConnectException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
+import org.apache.arrow.adbc.core.AdbcConnection;
+import org.apache.arrow.adbc.core.AdbcDatabase;
+import org.apache.arrow.adbc.core.AdbcDriver;
+import org.apache.arrow.adbc.core.AdbcException;
+import org.apache.arrow.adbc.core.AdbcStatement;
+import org.apache.arrow.adbc.driver.flightsql.FlightSqlDriver;
 import org.apache.arrow.flight.CallStatus;
 import org.apache.arrow.flight.FlightClient;
 import org.apache.arrow.flight.FlightClient.Builder;
@@ -44,7 +58,49 @@ import org.apache.arrow.flight.auth2.ClientIncomingAuthHeaderMiddleware;
 import org.apache.arrow.flight.grpc.CredentialCallOption;
 import org.apache.arrow.flight.FlightInfo;
 import org.apache.arrow.flight.FlightRuntimeException;
+import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DateMilliVector;
+import org.apache.arrow.vector.DecimalVector;
+import org.apache.arrow.vector.DurationVector;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float4Vector;
+import org.apache.arrow.vector.Float8Vector;
+import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.LargeVarBinaryVector;
+import org.apache.arrow.vector.LargeVarCharVector;
+import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeMicroVector;
+import org.apache.arrow.vector.TimeMilliVector;
+import org.apache.arrow.vector.TimeNanoVector;
+import org.apache.arrow.vector.TimeSecVector;
+import org.apache.arrow.vector.TimeStampMicroTZVector;
+import org.apache.arrow.vector.TimeStampMicroVector;
+import org.apache.arrow.vector.TimeStampMilliTZVector;
+import org.apache.arrow.vector.TimeStampMilliVector;
+import org.apache.arrow.vector.TimeStampNanoTZVector;
+import org.apache.arrow.vector.TimeStampNanoVector;
+import org.apache.arrow.vector.TimeStampSecTZVector;
+import org.apache.arrow.vector.TimeStampSecVector;
+import org.apache.arrow.vector.TinyIntVector;
+import org.apache.arrow.vector.UInt1Vector;
+import org.apache.arrow.vector.UInt2Vector;
+import org.apache.arrow.vector.UInt4Vector;
+import org.apache.arrow.vector.UInt8Vector;
+import org.apache.arrow.vector.VarBinaryVector;
+import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.ipc.ArrowReader;
+import org.apache.arrow.vector.types.DateUnit;
+import org.apache.arrow.vector.types.FloatingPointPrecision;
+import org.apache.arrow.vector.types.TimeUnit;
+import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.FieldType;
+import org.apache.arrow.vector.types.pojo.Schema;
 
 import com.github.rholder.retry.RetryException;
 import com.github.rholder.retry.Retryer;
@@ -57,7 +113,8 @@ import com.google.gson.Gson;
 import org.apache.arrow.flight.sql.FlightSqlClient;
 
 /**
- * Client to execute SQL queries against Spice.ai Cloud and Spice.ai OSS
+ * Client to execute SQL queries against Spice.ai Cloud and Spice.ai OSS.
+ * Supports both regular queries and parameterized queries using ADBC.
  */
 public class SpiceClient implements AutoCloseable {
 
@@ -65,11 +122,17 @@ public class SpiceClient implements AutoCloseable {
 
     private String appId;
     private String apiKey;
+    private String userAgent;
     private URI flightAddress;
     private URI httpAddress;
     private int maxRetries;
     private FlightSqlClient flightClient;
     private CredentialCallOption authCallOptions = null;
+    private BufferAllocator allocator;
+
+    // ADBC resources for parameterized queries
+    private AdbcDatabase adbcDatabase;
+    private AdbcConnection adbcConnection;
 
     /**
      * Returns a new instance of SpiceClientBuilder
@@ -105,6 +168,7 @@ public class SpiceClient implements AutoCloseable {
         this.apiKey = apiKey;
         this.maxRetries = maxRetries;
         this.httpAddress = httpAddress;
+        this.userAgent = userAgent;
 
         // Arrow Flight requires URI to be grpc protocol, convert http/https for
         // convinience
@@ -121,7 +185,8 @@ public class SpiceClient implements AutoCloseable {
         long memoryLimitBytes = (memoryLimitMB > Long.MAX_VALUE / BYTES_PER_MB)
                 ? Long.MAX_VALUE
                 : memoryLimitMB * BYTES_PER_MB;
-        Builder builder = FlightClient.builder(new RootAllocator(memoryLimitBytes), new Location(this.flightAddress));
+        this.allocator = new RootAllocator(memoryLimitBytes);
+        Builder builder = FlightClient.builder(allocator, new Location(this.flightAddress));
 
         if (Strings.isNullOrEmpty(apiKey)) {
             this.flightClient = new FlightSqlClient(builder.build());
@@ -169,6 +234,471 @@ public class SpiceClient implements AutoCloseable {
         } catch (RetryException e) {
             Throwable err = e.getLastFailedAttempt().getExceptionCause();
             throw new ExecutionException("Failed to execute query due to error: " + err.toString(), err);
+        }
+    }
+
+    /**
+     * Executes a parameterized SQL query using ADBC.
+     * This is the recommended method for queries with user input to prevent SQL
+     * injection.
+     * Parameters should use positional placeholders ($1, $2, etc.) in the SQL
+     * query.
+     *
+     * <p>
+     * Parameters can be:
+     * </p>
+     * <ul>
+     * <li>Simple Java values (int, long, String, boolean, etc.) - type will be
+     * inferred</li>
+     * <li>Param instances with explicit type annotation using Param factory
+     * methods</li>
+     * </ul>
+     *
+     * <p>
+     * Example usage:
+     * </p>
+     * 
+     * <pre>
+     * // With automatic type inference
+     * ArrowReader reader = client.queryWithParams(
+     *     "SELECT * FROM table WHERE id = $1 AND name = $2",
+     *     123, "test");
+     * 
+     * // With explicit types
+     * ArrowReader reader = client.queryWithParams(
+     *     "SELECT * FROM table WHERE id = $1 AND amount = $2",
+     *     Param.int32(123), Param.float64(99.99));
+     * </pre>
+     *
+     * @param sql    the SQL query with positional parameter placeholders ($1, $2,
+     *               etc.)
+     * @param params the parameter values (can be plain values or Param instances)
+     * @return an ArrowReader with the query results. The caller is responsible for
+     *         closing the reader.
+     * @throws ExecutionException if there is an error executing the query
+     */
+    public ArrowReader queryWithParams(String sql, Object... params) throws ExecutionException {
+        if (Strings.isNullOrEmpty(sql)) {
+            throw new IllegalArgumentException("No SQL query provided");
+        }
+
+        try {
+            initADBCIfNeeded();
+            return queryWithParamsInternal(sql, params);
+        } catch (AdbcException e) {
+            throw new ExecutionException("Failed to execute parameterized query: " + e.getMessage(), e);
+        } catch (RetryException e) {
+            Throwable err = e.getLastFailedAttempt().getExceptionCause();
+            throw new ExecutionException("Failed to execute parameterized query due to error: " + err.toString(), err);
+        }
+    }
+
+    /**
+     * Initializes the ADBC connection if not already initialized.
+     * This is called lazily on the first parameterized query.
+     */
+    private synchronized void initADBCIfNeeded() throws AdbcException {
+        if (adbcDatabase != null && adbcConnection != null) {
+            return;
+        }
+
+        // Format the URI for ADBC FlightSQL driver
+        String uri = this.flightAddress.toString();
+
+        // Convert grpc+tls:// to grpc+tls:// format expected by ADBC
+        // and grpc+tcp:// to grpc:// format
+        if (uri.startsWith("grpc+tcp://")) {
+            uri = "grpc://" + uri.substring("grpc+tcp://".length());
+        }
+
+        // Build driver options
+        Map<String, Object> options = new HashMap<>();
+        options.put(AdbcDriver.PARAM_URI, uri);
+
+        // Add authentication if available
+        if (!Strings.isNullOrEmpty(apiKey)) {
+            options.put(AdbcDriver.PARAM_USERNAME, appId);
+            options.put(AdbcDriver.PARAM_PASSWORD, apiKey);
+        }
+
+        // Add user agent header
+        String uaString;
+        if (Strings.isNullOrEmpty(userAgent)) {
+            uaString = Config.getUserAgent();
+        } else {
+            uaString = userAgent + " " + Config.getUserAgent();
+        }
+        options.put("adbc.flight.sql.rpc.call_header.user-agent", uaString);
+
+        // Create the driver and database
+        FlightSqlDriver driver = new FlightSqlDriver(allocator);
+        adbcDatabase = driver.open(options);
+        adbcConnection = adbcDatabase.connect();
+    }
+
+    /**
+     * Closes the ADBC resources.
+     */
+    private void closeADBC() {
+        if (adbcConnection != null) {
+            try {
+                adbcConnection.close();
+            } catch (Exception e) {
+                // Log but don't fail
+            }
+            adbcConnection = null;
+        }
+        if (adbcDatabase != null) {
+            try {
+                adbcDatabase.close();
+            } catch (Exception e) {
+                // Log but don't fail
+            }
+            adbcDatabase = null;
+        }
+    }
+
+    /**
+     * Internal implementation of parameterized query execution.
+     */
+    private ArrowReader queryWithParamsInternal(String sql, Object... params)
+            throws AdbcException, RetryException {
+        Retryer<ArrowReader> retryer = RetryerBuilder.<ArrowReader>newBuilder()
+                .retryIfException(throwable -> {
+                    if (throwable instanceof AdbcException) {
+                        // Retry on connection/unavailable errors
+                        String message = throwable.getMessage();
+                        return message != null && (message.contains("UNAVAILABLE") ||
+                                message.contains("UNKNOWN") ||
+                                message.contains("DEADLINE_EXCEEDED") ||
+                                message.contains("INTERNAL"));
+                    }
+                    return false;
+                })
+                .withWaitStrategy(WaitStrategies.fibonacciWait())
+                .withStopStrategy(StopStrategies.stopAfterAttempt(this.maxRetries + 1))
+                .build();
+
+        return retryer.call(() -> executeParameterizedQuery(sql, params));
+    }
+
+    /**
+     * Executes a single parameterized query using ADBC prepare/bind/execute
+     * pattern.
+     */
+    private ArrowReader executeParameterizedQuery(String sql, Object... params) throws AdbcException {
+        AdbcStatement stmt = adbcConnection.createStatement();
+
+        try {
+            // Set the query
+            stmt.setSqlQuery(sql);
+
+            // Prepare the statement
+            stmt.prepare();
+
+            // Bind parameters if provided
+            if (params != null && params.length > 0) {
+                bindParameters(stmt, params);
+            }
+
+            // Execute and return the reader
+            AdbcStatement.QueryResult result = stmt.executeQuery();
+            return result.getReader();
+        } catch (AdbcException e) {
+            try {
+                stmt.close();
+            } catch (Exception closeEx) {
+                // Ignore close exception
+            }
+            throw e;
+        }
+        // Note: We don't close the statement here because the reader needs it
+        // The statement will be closed when the reader is closed
+    }
+
+    /**
+     * Binds parameters to an ADBC statement.
+     * Handles both plain Java values (with type inference) and Param instances.
+     */
+    private void bindParameters(AdbcStatement stmt, Object... params) throws AdbcException {
+        if (params == null || params.length == 0) {
+            return;
+        }
+
+        // Extract values and determine types
+        Object[] values = new Object[params.length];
+        ArrowType[] types = new ArrowType[params.length];
+
+        for (int i = 0; i < params.length; i++) {
+            Object param = params[i];
+
+            if (param instanceof Param) {
+                Param p = (Param) param;
+                values[i] = p.getValue();
+                if (p.hasExplicitType()) {
+                    types[i] = p.getType();
+                } else {
+                    types[i] = inferArrowType(p.getValue());
+                }
+            } else {
+                values[i] = param;
+                types[i] = inferArrowType(param);
+            }
+        }
+
+        // Build the schema for parameters
+        List<Field> fields = new ArrayList<>();
+        for (int i = 0; i < params.length; i++) {
+            fields.add(new Field("$" + (i + 1), FieldType.nullable(types[i]), null));
+        }
+        Schema schema = new Schema(fields);
+
+        // Create a VectorSchemaRoot and populate it
+        try (VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator)) {
+            root.allocateNew();
+
+            // Append values to the vectors
+            for (int i = 0; i < params.length; i++) {
+                FieldVector vector = root.getVector(i);
+                appendValueToVector(vector, 0, values[i], types[i]);
+            }
+
+            root.setRowCount(1);
+
+            // Bind the parameters
+            stmt.bind(root);
+        }
+    }
+
+    /**
+     * Infers the Arrow type from a Java value.
+     */
+    private ArrowType inferArrowType(Object value) {
+        if (value == null) {
+            return ArrowType.Null.INSTANCE;
+        }
+
+        // Integer types
+        if (value instanceof Byte) {
+            return new ArrowType.Int(8, true);
+        }
+        if (value instanceof Short) {
+            return new ArrowType.Int(16, true);
+        }
+        if (value instanceof Integer) {
+            return new ArrowType.Int(32, true);
+        }
+        if (value instanceof Long) {
+            return new ArrowType.Int(64, true);
+        }
+
+        // Floating point types
+        if (value instanceof Float) {
+            return new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE);
+        }
+        if (value instanceof Double) {
+            return new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
+        }
+
+        // String and binary types
+        if (value instanceof String) {
+            return ArrowType.Utf8.INSTANCE;
+        }
+        if (value instanceof byte[]) {
+            return ArrowType.Binary.INSTANCE;
+        }
+
+        // Boolean
+        if (value instanceof Boolean) {
+            return ArrowType.Bool.INSTANCE;
+        }
+
+        // Temporal types
+        if (value instanceof LocalDate) {
+            return new ArrowType.Date(DateUnit.DAY);
+        }
+        if (value instanceof LocalTime) {
+            return new ArrowType.Time(TimeUnit.MICROSECOND, 64);
+        }
+        if (value instanceof LocalDateTime) {
+            return new ArrowType.Timestamp(TimeUnit.MICROSECOND, "UTC");
+        }
+        if (value instanceof Duration) {
+            return new ArrowType.Duration(TimeUnit.MICROSECOND);
+        }
+
+        // Decimal
+        if (value instanceof BigDecimal) {
+            BigDecimal bd = (BigDecimal) value;
+            int precision = Math.max(bd.precision(), 1);
+            int scale = Math.max(bd.scale(), 0);
+            // Ensure precision is at least scale + 1
+            precision = Math.max(precision, scale + 1);
+            // Cap at Decimal128 max precision
+            if (precision <= 38) {
+                return new ArrowType.Decimal(precision, scale, 128);
+            } else {
+                return new ArrowType.Decimal(precision, scale, 256);
+            }
+        }
+
+        throw new IllegalArgumentException(
+                "Unsupported parameter type: " + value.getClass().getName() +
+                        ". Use Param.of(value, type) for explicit type control.");
+    }
+
+    /**
+     * Appends a value to an Arrow vector at the specified index.
+     */
+    @SuppressWarnings("deprecation")
+    private void appendValueToVector(FieldVector vector, int index, Object value, ArrowType type)
+            throws AdbcException {
+        if (value == null) {
+            vector.setNull(index);
+            return;
+        }
+
+        try {
+            // Integer vectors
+            if (vector instanceof TinyIntVector) {
+                ((TinyIntVector) vector).set(index, ((Number) value).byteValue());
+            } else if (vector instanceof SmallIntVector) {
+                ((SmallIntVector) vector).set(index, ((Number) value).shortValue());
+            } else if (vector instanceof IntVector) {
+                ((IntVector) vector).set(index, ((Number) value).intValue());
+            } else if (vector instanceof BigIntVector) {
+                ((BigIntVector) vector).set(index, ((Number) value).longValue());
+            }
+            // Unsigned integer vectors
+            else if (vector instanceof UInt1Vector) {
+                ((UInt1Vector) vector).set(index, ((Number) value).byteValue());
+            } else if (vector instanceof UInt2Vector) {
+                // Convert char to int for UInt2Vector
+                if (value instanceof Character) {
+                    ((UInt2Vector) vector).set(index, (int) ((Character) value).charValue());
+                } else {
+                    ((UInt2Vector) vector).set(index, ((Number) value).intValue());
+                }
+            } else if (vector instanceof UInt4Vector) {
+                ((UInt4Vector) vector).set(index, ((Number) value).intValue());
+            } else if (vector instanceof UInt8Vector) {
+                ((UInt8Vector) vector).set(index, ((Number) value).longValue());
+            }
+            // Floating point vectors
+            else if (vector instanceof Float4Vector) {
+                ((Float4Vector) vector).set(index, ((Number) value).floatValue());
+            } else if (vector instanceof Float8Vector) {
+                ((Float8Vector) vector).set(index, ((Number) value).doubleValue());
+            }
+            // String vectors
+            else if (vector instanceof VarCharVector) {
+                byte[] bytes = value.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                ((VarCharVector) vector).set(index, bytes);
+            } else if (vector instanceof LargeVarCharVector) {
+                byte[] bytes = value.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                ((LargeVarCharVector) vector).set(index, bytes);
+            }
+            // Binary vectors
+            else if (vector instanceof VarBinaryVector) {
+                ((VarBinaryVector) vector).set(index, (byte[]) value);
+            } else if (vector instanceof LargeVarBinaryVector) {
+                ((LargeVarBinaryVector) vector).set(index, (byte[]) value);
+            }
+            // Boolean vector
+            else if (vector instanceof BitVector) {
+                ((BitVector) vector).set(index, ((Boolean) value) ? 1 : 0);
+            }
+            // Date vectors
+            else if (vector instanceof DateDayVector) {
+                LocalDate date = (LocalDate) value;
+                int daysSinceEpoch = (int) date.toEpochDay();
+                ((DateDayVector) vector).set(index, daysSinceEpoch);
+            } else if (vector instanceof DateMilliVector) {
+                LocalDate date = (LocalDate) value;
+                long millisSinceEpoch = date.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
+                ((DateMilliVector) vector).set(index, millisSinceEpoch);
+            }
+            // Time vectors
+            else if (vector instanceof TimeSecVector) {
+                LocalTime time = (LocalTime) value;
+                ((TimeSecVector) vector).set(index, time.toSecondOfDay());
+            } else if (vector instanceof TimeMilliVector) {
+                LocalTime time = (LocalTime) value;
+                ((TimeMilliVector) vector).set(index, (int) (time.toNanoOfDay() / 1_000_000));
+            } else if (vector instanceof TimeMicroVector) {
+                LocalTime time = (LocalTime) value;
+                ((TimeMicroVector) vector).set(index, time.toNanoOfDay() / 1_000);
+            } else if (vector instanceof TimeNanoVector) {
+                LocalTime time = (LocalTime) value;
+                ((TimeNanoVector) vector).set(index, time.toNanoOfDay());
+            }
+            // Timestamp vectors
+            else if (vector instanceof TimeStampSecVector) {
+                LocalDateTime dt = (LocalDateTime) value;
+                ((TimeStampSecVector) vector).set(index, dt.toEpochSecond(ZoneOffset.UTC));
+            } else if (vector instanceof TimeStampSecTZVector) {
+                LocalDateTime dt = (LocalDateTime) value;
+                ((TimeStampSecTZVector) vector).set(index, dt.toEpochSecond(ZoneOffset.UTC));
+            } else if (vector instanceof TimeStampMilliVector) {
+                LocalDateTime dt = (LocalDateTime) value;
+                ((TimeStampMilliVector) vector).set(index, dt.toInstant(ZoneOffset.UTC).toEpochMilli());
+            } else if (vector instanceof TimeStampMilliTZVector) {
+                LocalDateTime dt = (LocalDateTime) value;
+                ((TimeStampMilliTZVector) vector).set(index, dt.toInstant(ZoneOffset.UTC).toEpochMilli());
+            } else if (vector instanceof TimeStampMicroVector) {
+                LocalDateTime dt = (LocalDateTime) value;
+                long epochMicro = dt.toEpochSecond(ZoneOffset.UTC) * 1_000_000 + dt.getNano() / 1_000;
+                ((TimeStampMicroVector) vector).set(index, epochMicro);
+            } else if (vector instanceof TimeStampMicroTZVector) {
+                LocalDateTime dt = (LocalDateTime) value;
+                long epochMicro = dt.toEpochSecond(ZoneOffset.UTC) * 1_000_000 + dt.getNano() / 1_000;
+                ((TimeStampMicroTZVector) vector).set(index, epochMicro);
+            } else if (vector instanceof TimeStampNanoVector) {
+                LocalDateTime dt = (LocalDateTime) value;
+                long epochNano = dt.toEpochSecond(ZoneOffset.UTC) * 1_000_000_000 + dt.getNano();
+                ((TimeStampNanoVector) vector).set(index, epochNano);
+            } else if (vector instanceof TimeStampNanoTZVector) {
+                LocalDateTime dt = (LocalDateTime) value;
+                long epochNano = dt.toEpochSecond(ZoneOffset.UTC) * 1_000_000_000 + dt.getNano();
+                ((TimeStampNanoTZVector) vector).set(index, epochNano);
+            }
+            // Duration vector
+            else if (vector instanceof DurationVector) {
+                Duration duration = (Duration) value;
+                ArrowType.Duration durationType = (ArrowType.Duration) type;
+                long durationValue;
+                switch (durationType.getUnit()) {
+                    case SECOND:
+                        durationValue = duration.getSeconds();
+                        break;
+                    case MILLISECOND:
+                        durationValue = duration.toMillis();
+                        break;
+                    case MICROSECOND:
+                        durationValue = duration.toNanos() / 1_000;
+                        break;
+                    case NANOSECOND:
+                        durationValue = duration.toNanos();
+                        break;
+                    default:
+                        durationValue = duration.toNanos() / 1_000; // Default to microseconds
+                }
+                ((DurationVector) vector).set(index, durationValue);
+            }
+            // Decimal vector
+            else if (vector instanceof DecimalVector) {
+                DecimalVector decVector = (DecimalVector) vector;
+                BigDecimal bd = (BigDecimal) value;
+                decVector.set(index, bd);
+            } else {
+                throw new AdbcException("Unsupported vector type: " + vector.getClass().getName(),
+                        null, AdbcException.UNKNOWN, null, 0);
+            }
+        } catch (ClassCastException e) {
+            throw new AdbcException(
+                    "Cannot convert value of type " + value.getClass().getName() +
+                            " to " + vector.getClass().getSimpleName(),
+                    e, AdbcException.INVALID_ARGUMENT, null, 0);
         }
     }
 
@@ -274,6 +804,37 @@ public class SpiceClient implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        this.flightClient.close();
+        List<Exception> exceptions = new ArrayList<>();
+
+        // Close ADBC resources first
+        try {
+            closeADBC();
+        } catch (Exception e) {
+            exceptions.add(e);
+        }
+
+        // Close Flight client
+        try {
+            this.flightClient.close();
+        } catch (Exception e) {
+            exceptions.add(e);
+        }
+
+        // Close allocator
+        try {
+            if (this.allocator != null) {
+                this.allocator.close();
+            }
+        } catch (Exception e) {
+            exceptions.add(e);
+        }
+
+        if (!exceptions.isEmpty()) {
+            Exception first = exceptions.get(0);
+            for (int i = 1; i < exceptions.size(); i++) {
+                first.addSuppressed(exceptions.get(i));
+            }
+            throw first;
+        }
     }
 }

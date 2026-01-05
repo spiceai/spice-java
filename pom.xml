@@ -4,7 +4,7 @@
     <groupId>ai.spice</groupId>
     <artifactId>spiceai</artifactId>
     <packaging>jar</packaging>
-    <version>0.4.0</version>
+    <version>0.5.0</version>
     <name>Java Spice SDK</name>
     <url>https://github.com/spiceai/spice-java/</url>
     <description>Spice provides a unified SQL query interface and portable runtime to locally materialize, accelerate, and query datasets from any database, data warehouse, or data lake.</description>
@@ -37,6 +37,16 @@
             <groupId>org.apache.arrow</groupId>
             <artifactId>flight-sql</artifactId>
             <version>17.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.arrow.adbc</groupId>
+            <artifactId>adbc-driver-flight-sql</artifactId>
+            <version>0.14.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.arrow.adbc</groupId>
+            <artifactId>adbc-core</artifactId>
+            <version>0.14.0</version>
         </dependency>
         <dependency>
             <groupId>com.github.rholder</groupId>
