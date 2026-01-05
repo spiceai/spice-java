@@ -57,6 +57,34 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
  */
 public class Param {
 
+    // ========== Cached Arrow Types for Performance ==========
+    // These are immutable and safe to share across threads
+    
+    private static final ArrowType INT8 = new ArrowType.Int(8, true);
+    private static final ArrowType INT16 = new ArrowType.Int(16, true);
+    private static final ArrowType INT32 = new ArrowType.Int(32, true);
+    private static final ArrowType INT64 = new ArrowType.Int(64, true);
+    private static final ArrowType UINT8 = new ArrowType.Int(8, false);
+    private static final ArrowType UINT16 = new ArrowType.Int(16, false);
+    private static final ArrowType UINT32 = new ArrowType.Int(32, false);
+    private static final ArrowType UINT64 = new ArrowType.Int(64, false);
+    
+    private static final ArrowType FLOAT16 = new ArrowType.FloatingPoint(FloatingPointPrecision.HALF);
+    private static final ArrowType FLOAT32 = new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE);
+    private static final ArrowType FLOAT64 = new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
+    
+    private static final ArrowType DATE32 = new ArrowType.Date(DateUnit.DAY);
+    private static final ArrowType DATE64 = new ArrowType.Date(DateUnit.MILLISECOND);
+    
+    private static final ArrowType TIME64_MICRO = new ArrowType.Time(TimeUnit.MICROSECOND, 64);
+    private static final ArrowType TIME64_NANO = new ArrowType.Time(TimeUnit.NANOSECOND, 64);
+    private static final ArrowType TIME32_SEC = new ArrowType.Time(TimeUnit.SECOND, 32);
+    private static final ArrowType TIME32_MILLI = new ArrowType.Time(TimeUnit.MILLISECOND, 32);
+    
+    private static final ArrowType DURATION_MICRO = new ArrowType.Duration(TimeUnit.MICROSECOND);
+    
+    private static final ArrowType TIMESTAMP_MICRO_UTC = new ArrowType.Timestamp(TimeUnit.MICROSECOND, "UTC");
+
     private final Object value;
     private final ArrowType type;
 
@@ -117,7 +145,7 @@ public class Param {
      * @return A new Param with Int8 type
      */
     public static Param int8(byte value) {
-        return new Param(value, new ArrowType.Int(8, true));
+        return new Param(value, INT8);
     }
 
     /**
@@ -127,7 +155,7 @@ public class Param {
      * @return A new Param with Int16 type
      */
     public static Param int16(short value) {
-        return new Param(value, new ArrowType.Int(16, true));
+        return new Param(value, INT16);
     }
 
     /**
@@ -137,7 +165,7 @@ public class Param {
      * @return A new Param with Int32 type
      */
     public static Param int32(int value) {
-        return new Param(value, new ArrowType.Int(32, true));
+        return new Param(value, INT32);
     }
 
     /**
@@ -147,7 +175,7 @@ public class Param {
      * @return A new Param with Int64 type
      */
     public static Param int64(long value) {
-        return new Param(value, new ArrowType.Int(64, true));
+        return new Param(value, INT64);
     }
 
     /**
@@ -157,7 +185,7 @@ public class Param {
      * @return A new Param with Uint8 type
      */
     public static Param uint8(short value) {
-        return new Param(value, new ArrowType.Int(8, false));
+        return new Param(value, UINT8);
     }
 
     /**
@@ -167,7 +195,7 @@ public class Param {
      * @return A new Param with Uint16 type
      */
     public static Param uint16(int value) {
-        return new Param(value, new ArrowType.Int(16, false));
+        return new Param(value, UINT16);
     }
 
     /**
@@ -177,7 +205,7 @@ public class Param {
      * @return A new Param with Uint32 type
      */
     public static Param uint32(long value) {
-        return new Param(value, new ArrowType.Int(32, false));
+        return new Param(value, UINT32);
     }
 
     /**
@@ -187,7 +215,7 @@ public class Param {
      * @return A new Param with Uint64 type
      */
     public static Param uint64(long value) {
-        return new Param(value, new ArrowType.Int(64, false));
+        return new Param(value, UINT64);
     }
 
     // ========== Floating Point Types ==========
@@ -199,7 +227,7 @@ public class Param {
      * @return A new Param with Float16 type
      */
     public static Param float16(short value) {
-        return new Param(value, new ArrowType.FloatingPoint(FloatingPointPrecision.HALF));
+        return new Param(value, FLOAT16);
     }
 
     /**
@@ -209,7 +237,7 @@ public class Param {
      * @return A new Param with Float32 type
      */
     public static Param float32(float value) {
-        return new Param(value, new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE));
+        return new Param(value, FLOAT32);
     }
 
     /**
@@ -219,7 +247,7 @@ public class Param {
      * @return A new Param with Float64 type
      */
     public static Param float64(double value) {
-        return new Param(value, new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE));
+        return new Param(value, FLOAT64);
     }
 
     // ========== String and Binary Types ==========
@@ -296,7 +324,7 @@ public class Param {
      * @return A new Param with Date32 type
      */
     public static Param date32(LocalDate value) {
-        return new Param(value, new ArrowType.Date(DateUnit.DAY));
+        return new Param(value, DATE32);
     }
 
     /**
@@ -306,7 +334,7 @@ public class Param {
      * @return A new Param with Date64 type
      */
     public static Param date64(LocalDate value) {
-        return new Param(value, new ArrowType.Date(DateUnit.MILLISECOND));
+        return new Param(value, DATE64);
     }
 
     /**
@@ -317,10 +345,12 @@ public class Param {
      * @return A new Param with Time32 type
      */
     public static Param time32(LocalTime value, TimeUnit unit) {
-        if (unit != TimeUnit.SECOND && unit != TimeUnit.MILLISECOND) {
-            throw new IllegalArgumentException("Time32 only supports SECOND or MILLISECOND units");
+        if (unit == TimeUnit.SECOND) {
+            return new Param(value, TIME32_SEC);
+        } else if (unit == TimeUnit.MILLISECOND) {
+            return new Param(value, TIME32_MILLI);
         }
-        return new Param(value, new ArrowType.Time(unit, 32));
+        throw new IllegalArgumentException("Time32 only supports SECOND or MILLISECOND units");
     }
 
     /**
@@ -331,10 +361,12 @@ public class Param {
      * @return A new Param with Time64 type
      */
     public static Param time64(LocalTime value, TimeUnit unit) {
-        if (unit != TimeUnit.MICROSECOND && unit != TimeUnit.NANOSECOND) {
-            throw new IllegalArgumentException("Time64 only supports MICROSECOND or NANOSECOND units");
+        if (unit == TimeUnit.MICROSECOND) {
+            return new Param(value, TIME64_MICRO);
+        } else if (unit == TimeUnit.NANOSECOND) {
+            return new Param(value, TIME64_NANO);
         }
-        return new Param(value, new ArrowType.Time(unit, 64));
+        throw new IllegalArgumentException("Time64 only supports MICROSECOND or NANOSECOND units");
     }
 
     /**
@@ -346,6 +378,10 @@ public class Param {
      * @return A new Param with Timestamp type
      */
     public static Param timestamp(LocalDateTime value, TimeUnit unit, String timezone) {
+        // Fast path for common case: microseconds with UTC
+        if (unit == TimeUnit.MICROSECOND && "UTC".equals(timezone)) {
+            return new Param(value, TIMESTAMP_MICRO_UTC);
+        }
         return new Param(value, new ArrowType.Timestamp(unit, timezone));
     }
 
@@ -368,6 +404,10 @@ public class Param {
      * @return A new Param with Duration type
      */
     public static Param duration(Duration value, TimeUnit unit) {
+        // Fast path for common case: microseconds
+        if (unit == TimeUnit.MICROSECOND) {
+            return new Param(value, DURATION_MICRO);
+        }
         return new Param(value, new ArrowType.Duration(unit));
     }
 

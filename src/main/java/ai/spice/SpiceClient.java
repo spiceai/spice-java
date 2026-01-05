@@ -45,6 +45,7 @@ import org.apache.arrow.adbc.core.AdbcDatabase;
 import org.apache.arrow.adbc.core.AdbcDriver;
 import org.apache.arrow.adbc.core.AdbcException;
 import org.apache.arrow.adbc.core.AdbcStatement;
+import org.apache.arrow.adbc.core.AdbcStatusCode;
 import org.apache.arrow.adbc.driver.flightsql.FlightSqlDriver;
 import org.apache.arrow.flight.CallStatus;
 import org.apache.arrow.flight.FlightClient;
@@ -119,6 +120,20 @@ import org.apache.arrow.flight.sql.FlightSqlClient;
 public class SpiceClient implements AutoCloseable {
 
     private static final long BYTES_PER_MB = 1024L * 1024L;
+    
+    // Cached Gson instance for JSON serialization (thread-safe)
+    private static final Gson GSON = new Gson();
+    
+    // Cached HttpClient for refresh operations (thread-safe, connection pooling)
+    private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+    
+    // Pre-computed parameter field names to avoid string concatenation in hot path
+    private static final String[] PARAM_NAMES = new String[64];
+    static {
+        for (int i = 0; i < PARAM_NAMES.length; i++) {
+            PARAM_NAMES[i] = "$" + (i + 1);
+        }
+    }
 
     private String appId;
     private String apiKey;
@@ -129,6 +144,10 @@ public class SpiceClient implements AutoCloseable {
     private FlightSqlClient flightClient;
     private CredentialCallOption authCallOptions = null;
     private BufferAllocator allocator;
+    
+    // Cached retryers (immutable, thread-safe)
+    private Retryer<ArrowReader> adbcRetryer;
+    private Retryer<FlightStream> flightRetryer;
 
     // ADBC resources for parameterized queries
     private AdbcDatabase adbcDatabase;
@@ -190,6 +209,7 @@ public class SpiceClient implements AutoCloseable {
 
         if (Strings.isNullOrEmpty(apiKey)) {
             this.flightClient = new FlightSqlClient(builder.build());
+            initRetryers();
             return;
         }
 
@@ -215,6 +235,44 @@ public class SpiceClient implements AutoCloseable {
         client.handshake(new CredentialCallOption(new BasicAuthCredentialWriter(this.appId, this.apiKey)));
         this.authCallOptions = authFactory.getCredentialCallOption();
         this.flightClient = new FlightSqlClient(client);
+        
+        // Initialize cached retryers (immutable, built once)
+        initRetryers();
+    }
+    
+    /**
+     * Initializes the cached retryer instances.
+     * Called from constructor and must be called after maxRetries is set.
+     */
+    private void initRetryers() {
+        this.adbcRetryer = RetryerBuilder.<ArrowReader>newBuilder()
+                .retryIfException(throwable -> {
+                    if (throwable instanceof AdbcException) {
+                        String message = throwable.getMessage();
+                        return message != null && (message.contains("UNAVAILABLE") ||
+                                message.contains("UNKNOWN") ||
+                                message.contains("DEADLINE_EXCEEDED") ||
+                                message.contains("INTERNAL"));
+                    }
+                    return false;
+                })
+                .withWaitStrategy(WaitStrategies.fibonacciWait())
+                .withStopStrategy(StopStrategies.stopAfterAttempt(this.maxRetries + 1))
+                .build();
+                
+        this.flightRetryer = RetryerBuilder.<FlightStream>newBuilder()
+                .retryIfException(throwable -> {
+                    if (throwable instanceof FlightRuntimeException) {
+                        FlightRuntimeException flightException = (FlightRuntimeException) throwable;
+                        CallStatus status = flightException.status();
+                        return shouldRetry(status);
+                    }
+                    return false;
+                })
+                .withWaitStrategy(WaitStrategies.fibonacciWait())
+                .withStopStrategy(StopStrategies.stopAfterAttempt(this.maxRetries + 1))
+                .build();
+    }
     }
 
     /**
@@ -313,12 +371,12 @@ public class SpiceClient implements AutoCloseable {
 
         // Build driver options
         Map<String, Object> options = new HashMap<>();
-        options.put(AdbcDriver.PARAM_URI, uri);
+        AdbcDriver.PARAM_URI.set(options, uri);
 
         // Add authentication if available
         if (!Strings.isNullOrEmpty(apiKey)) {
-            options.put(AdbcDriver.PARAM_USERNAME, appId);
-            options.put(AdbcDriver.PARAM_PASSWORD, apiKey);
+            AdbcDriver.PARAM_USERNAME.set(options, appId);
+            AdbcDriver.PARAM_PASSWORD.set(options, apiKey);
         }
 
         // Add user agent header
@@ -363,23 +421,7 @@ public class SpiceClient implements AutoCloseable {
      */
     private ArrowReader queryWithParamsInternal(String sql, Object... params)
             throws AdbcException, RetryException {
-        Retryer<ArrowReader> retryer = RetryerBuilder.<ArrowReader>newBuilder()
-                .retryIfException(throwable -> {
-                    if (throwable instanceof AdbcException) {
-                        // Retry on connection/unavailable errors
-                        String message = throwable.getMessage();
-                        return message != null && (message.contains("UNAVAILABLE") ||
-                                message.contains("UNKNOWN") ||
-                                message.contains("DEADLINE_EXCEEDED") ||
-                                message.contains("INTERNAL"));
-                    }
-                    return false;
-                })
-                .withWaitStrategy(WaitStrategies.fibonacciWait())
-                .withStopStrategy(StopStrategies.stopAfterAttempt(this.maxRetries + 1))
-                .build();
-
-        return retryer.call(() -> executeParameterizedQuery(sql, params));
+        return adbcRetryer.call(() -> executeParameterizedQuery(sql, params));
     }
 
     /**
@@ -426,10 +468,11 @@ public class SpiceClient implements AutoCloseable {
         }
 
         // Extract values and determine types
-        Object[] values = new Object[params.length];
-        ArrowType[] types = new ArrowType[params.length];
+        final int numParams = params.length;
+        Object[] values = new Object[numParams];
+        ArrowType[] types = new ArrowType[numParams];
 
-        for (int i = 0; i < params.length; i++) {
+        for (int i = 0; i < numParams; i++) {
             Object param = params[i];
 
             if (param instanceof Param) {
@@ -446,10 +489,12 @@ public class SpiceClient implements AutoCloseable {
             }
         }
 
-        // Build the schema for parameters
-        List<Field> fields = new ArrayList<>();
-        for (int i = 0; i < params.length; i++) {
-            fields.add(new Field("$" + (i + 1), FieldType.nullable(types[i]), null));
+        // Build the schema for parameters with pre-sized list
+        List<Field> fields = new ArrayList<>(numParams);
+        for (int i = 0; i < numParams; i++) {
+            // Use cached field names for common cases (up to 64 params)
+            String fieldName = (i < PARAM_NAMES.length) ? PARAM_NAMES[i] : "$" + (i + 1);
+            fields.add(new Field(fieldName, FieldType.nullable(types[i]), null));
         }
         Schema schema = new Schema(fields);
 
@@ -458,7 +503,7 @@ public class SpiceClient implements AutoCloseable {
             root.allocateNew();
 
             // Append values to the vectors
-            for (int i = 0; i < params.length; i++) {
+            for (int i = 0; i < numParams; i++) {
                 FieldVector vector = root.getVector(i);
                 appendValueToVector(vector, 0, values[i], types[i]);
             }
@@ -470,37 +515,50 @@ public class SpiceClient implements AutoCloseable {
         }
     }
 
+    // Cached ArrowTypes for type inference (immutable, thread-safe)
+    private static final ArrowType INFER_INT8 = new ArrowType.Int(8, true);
+    private static final ArrowType INFER_INT16 = new ArrowType.Int(16, true);
+    private static final ArrowType INFER_INT32 = new ArrowType.Int(32, true);
+    private static final ArrowType INFER_INT64 = new ArrowType.Int(64, true);
+    private static final ArrowType INFER_FLOAT32 = new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE);
+    private static final ArrowType INFER_FLOAT64 = new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
+    private static final ArrowType INFER_DATE32 = new ArrowType.Date(DateUnit.DAY);
+    private static final ArrowType INFER_TIME64_MICRO = new ArrowType.Time(TimeUnit.MICROSECOND, 64);
+    private static final ArrowType INFER_TIMESTAMP_MICRO_UTC = new ArrowType.Timestamp(TimeUnit.MICROSECOND, "UTC");
+    private static final ArrowType INFER_DURATION_MICRO = new ArrowType.Duration(TimeUnit.MICROSECOND);
+
     /**
      * Infers the Arrow type from a Java value.
+     * Uses cached type instances for common types to minimize allocations.
      */
     private ArrowType inferArrowType(Object value) {
         if (value == null) {
             return ArrowType.Null.INSTANCE;
         }
 
-        // Integer types
+        // Integer types - use cached instances
         if (value instanceof Byte) {
-            return new ArrowType.Int(8, true);
+            return INFER_INT8;
         }
         if (value instanceof Short) {
-            return new ArrowType.Int(16, true);
+            return INFER_INT16;
         }
         if (value instanceof Integer) {
-            return new ArrowType.Int(32, true);
+            return INFER_INT32;
         }
         if (value instanceof Long) {
-            return new ArrowType.Int(64, true);
+            return INFER_INT64;
         }
 
-        // Floating point types
+        // Floating point types - use cached instances
         if (value instanceof Float) {
-            return new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE);
+            return INFER_FLOAT32;
         }
         if (value instanceof Double) {
-            return new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
+            return INFER_FLOAT64;
         }
 
-        // String and binary types
+        // String and binary types - already use singleton INSTANCE
         if (value instanceof String) {
             return ArrowType.Utf8.INSTANCE;
         }
@@ -508,26 +566,26 @@ public class SpiceClient implements AutoCloseable {
             return ArrowType.Binary.INSTANCE;
         }
 
-        // Boolean
+        // Boolean - already uses singleton INSTANCE
         if (value instanceof Boolean) {
             return ArrowType.Bool.INSTANCE;
         }
 
-        // Temporal types
+        // Temporal types - use cached instances
         if (value instanceof LocalDate) {
-            return new ArrowType.Date(DateUnit.DAY);
+            return INFER_DATE32;
         }
         if (value instanceof LocalTime) {
-            return new ArrowType.Time(TimeUnit.MICROSECOND, 64);
+            return INFER_TIME64_MICRO;
         }
         if (value instanceof LocalDateTime) {
-            return new ArrowType.Timestamp(TimeUnit.MICROSECOND, "UTC");
+            return INFER_TIMESTAMP_MICRO_UTC;
         }
         if (value instanceof Duration) {
-            return new ArrowType.Duration(TimeUnit.MICROSECOND);
+            return INFER_DURATION_MICRO;
         }
 
-        // Decimal
+        // Decimal - must create new instance due to precision/scale
         if (value instanceof BigDecimal) {
             BigDecimal bd = (BigDecimal) value;
             int precision = Math.max(bd.precision(), 1);
@@ -692,13 +750,13 @@ public class SpiceClient implements AutoCloseable {
                 decVector.set(index, bd);
             } else {
                 throw new AdbcException("Unsupported vector type: " + vector.getClass().getName(),
-                        null, AdbcException.UNKNOWN, null, 0);
+                        null, AdbcStatusCode.UNKNOWN, null, 0);
             }
         } catch (ClassCastException e) {
             throw new AdbcException(
                     "Cannot convert value of type " + value.getClass().getName() +
                             " to " + vector.getClass().getSimpleName(),
-                    e, AdbcException.INVALID_ARGUMENT, null, 0);
+                    e, AdbcStatusCode.INVALID_ARGUMENT, null, 0);
         }
     }
 
@@ -731,23 +789,20 @@ public class SpiceClient implements AutoCloseable {
         }
 
         try {
-            HttpClient client = HttpClient.newHttpClient();
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(new URI(String.format("%s/v1/datasets/%s/acceleration/refresh", this.httpAddress, dataset)))
                     .header("Content-Type", "application/json")
                     .header("X-Spice-User-Agent", Config.getUserAgent());
 
             if (refreshOptions != null) {
-                Gson gson = new Gson();
-                String json = gson.toJson(refreshOptions);
-
+                String json = GSON.toJson(refreshOptions);
                 builder = builder.POST(HttpRequest.BodyPublishers.ofString(json));
             } else {
                 builder = builder.POST(HttpRequest.BodyPublishers.ofString("{}"));
             }
 
             HttpRequest request = builder.build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 201) {
                 throw new ExecutionException(
@@ -774,20 +829,7 @@ public class SpiceClient implements AutoCloseable {
     }
 
     private FlightStream queryInternalWithRetry(String sql) throws ExecutionException, RetryException {
-        Retryer<FlightStream> retryer = RetryerBuilder.<FlightStream>newBuilder()
-                .retryIfException(throwable -> {
-                    if (throwable instanceof FlightRuntimeException) {
-                        FlightRuntimeException flightException = (FlightRuntimeException) throwable;
-                        CallStatus status = flightException.status();
-                        return shouldRetry(status);
-                    }
-                    return false;
-                })
-                .withWaitStrategy(WaitStrategies.fibonacciWait())
-                .withStopStrategy(StopStrategies.stopAfterAttempt(this.maxRetries + 1))
-                .build();
-
-        return retryer.call(() -> this.queryInternal(sql));
+        return flightRetryer.call(() -> this.queryInternal(sql));
     }
 
     private boolean shouldRetry(CallStatus status) {
