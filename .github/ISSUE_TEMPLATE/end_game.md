@@ -33,7 +33,6 @@ assignees: ''
 - [ ] Full test pass and update if necessary over Docs
   - [ ] [docs.spiceai.org](https://docs.spiceai.org/sdks/java)
   - [ ] [docs.spice.ai](https://github.com/spicehq/docs/blob/trunk/sdks/java-sdk.md)
-- [ ] Verify community links are correct ([Slack](https://spiceai.org/slack))
 - [ ] Update [release notes](https://github.com/spiceai/spice-java/blob/trunk/docs/release_notes)
   - [ ] Ensure any external contributors have been acknowledged
 
