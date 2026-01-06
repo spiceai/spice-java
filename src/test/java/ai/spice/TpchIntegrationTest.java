@@ -46,19 +46,20 @@ import junit.framework.TestCase;
 public class TpchIntegrationTest extends TestCase {
 
     private SpiceClient client;
-    private boolean spiceAvailable = true;
+    private boolean tpchAvailable = true;
 
     @Override
     protected void setUp() throws Exception {
         super.setUp();
         try {
             client = SpiceClient.builder().build();
-            // Quick connectivity check
-            try (FlightStream stream = client.query("SELECT 1 as test")) {
+            // Check if TPC-H tables are available by querying tpch.customer
+            try (FlightStream stream = client.query("SELECT c_custkey FROM tpch.customer LIMIT 1")) {
                 stream.next();
             }
         } catch (Exception e) {
-            spiceAvailable = false;
+            // TPC-H tables not available (either no server or no TPC-H data)
+            tpchAvailable = false;
             if (client != null) {
                 try { client.close(); } catch (Exception ex) {}
                 client = null;
@@ -77,7 +78,7 @@ public class TpchIntegrationTest extends TestCase {
     // ==================== SHOW TABLES Tests ====================
 
     public void testShowTables() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         try (FlightStream stream = client.query("SHOW TABLES")) {
             Set<String> tableNames = new HashSet<>();
@@ -109,7 +110,7 @@ public class TpchIntegrationTest extends TestCase {
     // ==================== Customer Table Tests ====================
 
     public void testCustomerQuery() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         String sql = "SELECT c_custkey, c_name, c_nationkey FROM tpch.customer LIMIT 10";
         try (FlightStream stream = client.query(sql)) {
@@ -144,7 +145,7 @@ public class TpchIntegrationTest extends TestCase {
     }
 
     public void testCustomerWithFilter() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         String sql = "SELECT c_custkey, c_nationkey FROM tpch.customer WHERE c_nationkey = 1 LIMIT 5";
         try (FlightStream stream = client.query(sql)) {
@@ -169,7 +170,7 @@ public class TpchIntegrationTest extends TestCase {
     // ==================== Orders Table Tests ====================
 
     public void testOrdersQuery() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         String sql = "SELECT o_orderkey, o_custkey, o_totalprice FROM tpch.orders LIMIT 10";
         try (FlightStream stream = client.query(sql)) {
@@ -195,7 +196,7 @@ public class TpchIntegrationTest extends TestCase {
     }
 
     public void testOrdersWithPriceFilter() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         // Use a lower threshold that works with any scale factor
         String sql = "SELECT o_orderkey, o_totalprice FROM tpch.orders WHERE o_totalprice > 1000 LIMIT 5";
@@ -221,7 +222,7 @@ public class TpchIntegrationTest extends TestCase {
     // ==================== Aggregation Tests ====================
 
     public void testCountQuery() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         String sql = "SELECT COUNT(*) as cnt FROM tpch.customer";
         try (FlightStream stream = client.query(sql)) {
@@ -239,7 +240,7 @@ public class TpchIntegrationTest extends TestCase {
     }
 
     public void testSumQuery() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         // Use direct SUM without LIMIT (LIMIT doesn't work on aggregation)
         String sql = "SELECT SUM(o_totalprice) as total FROM tpch.orders";
@@ -262,7 +263,7 @@ public class TpchIntegrationTest extends TestCase {
     }
 
     public void testGroupByQuery() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         String sql = "SELECT o_orderstatus, COUNT(*) as cnt FROM tpch.orders GROUP BY o_orderstatus";
         try (FlightStream stream = client.query(sql)) {
@@ -285,7 +286,7 @@ public class TpchIntegrationTest extends TestCase {
     // ==================== JOIN Tests ====================
 
     public void testSimpleJoin() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         String sql = "SELECT c.c_name, o.o_orderkey " +
                 "FROM tpch.customer c " +
@@ -309,7 +310,7 @@ public class TpchIntegrationTest extends TestCase {
     // ==================== DESCRIBE Tests ====================
 
     public void testDescribeTable() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         String sql = "DESCRIBE tpch.customer";
         try (FlightStream stream = client.query(sql)) {
@@ -341,7 +342,7 @@ public class TpchIntegrationTest extends TestCase {
     // ==================== ORDER BY Tests ====================
 
     public void testOrderByAsc() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         String sql = "SELECT c_custkey FROM tpch.customer ORDER BY c_custkey ASC LIMIT 5";
         try (FlightStream stream = client.query(sql)) {
@@ -361,7 +362,7 @@ public class TpchIntegrationTest extends TestCase {
     }
 
     public void testOrderByDesc() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         String sql = "SELECT c_custkey FROM tpch.customer ORDER BY c_custkey DESC LIMIT 5";
         try (FlightStream stream = client.query(sql)) {
@@ -383,7 +384,7 @@ public class TpchIntegrationTest extends TestCase {
     // ==================== NULL Handling Tests ====================
 
     public void testNullHandling() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         // Query that might return nulls
         String sql = "SELECT c_custkey, c_phone FROM tpch.customer LIMIT 10";
@@ -414,7 +415,7 @@ public class TpchIntegrationTest extends TestCase {
     // ==================== Large Result Set Tests ====================
 
     public void testLargeResultSet() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         String sql = "SELECT c_custkey, c_name FROM tpch.customer LIMIT 1000";
         try (FlightStream stream = client.query(sql)) {
@@ -432,7 +433,7 @@ public class TpchIntegrationTest extends TestCase {
     // ==================== Empty Result Tests ====================
 
     public void testEmptyResult() throws Exception {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         // Query that should return no results
         String sql = "SELECT c_custkey FROM tpch.customer WHERE c_custkey < 0";
@@ -451,7 +452,7 @@ public class TpchIntegrationTest extends TestCase {
     // ==================== Error Handling Tests ====================
 
     public void testInvalidTableName() {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         try {
             try (FlightStream stream = client.query("SELECT * FROM nonexistent_table")) {
@@ -470,7 +471,7 @@ public class TpchIntegrationTest extends TestCase {
     }
 
     public void testInvalidColumnName() {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         try {
             try (FlightStream stream = client.query("SELECT nonexistent_column FROM tpch.customer")) {
@@ -489,7 +490,7 @@ public class TpchIntegrationTest extends TestCase {
     }
 
     public void testSyntaxError() {
-        if (!spiceAvailable) return;
+        if (!tpchAvailable) return;
 
         try {
             try (FlightStream stream = client.query("SELEC * FROM tpch.customer")) {

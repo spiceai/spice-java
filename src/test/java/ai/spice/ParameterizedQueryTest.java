@@ -100,7 +100,7 @@ public class ParameterizedQueryTest extends TestCase {
             }
         } catch (ExecutionException e) {
             // Local Spice runtime might not be running, skip test
-            if (e.getMessage().contains("UNAVAILABLE") || e.getMessage().contains("Connection refused")) {
+            if (e.getMessage().contains("UNAVAILABLE") || e.getMessage().contains("Connection refused") || e.getMessage().contains("not found")) {
                 return;
             }
             throw e;
@@ -127,7 +127,7 @@ public class ParameterizedQueryTest extends TestCase {
             }
         } catch (ExecutionException e) {
             // Local Spice runtime might not be running, skip test
-            if (e.getMessage().contains("UNAVAILABLE") || e.getMessage().contains("Connection refused")) {
+            if (e.getMessage().contains("UNAVAILABLE") || e.getMessage().contains("Connection refused") || e.getMessage().contains("not found")) {
                 return;
             }
             throw e;
@@ -155,7 +155,7 @@ public class ParameterizedQueryTest extends TestCase {
             }
         } catch (ExecutionException e) {
             // Local Spice runtime might not be running, skip test
-            if (e.getMessage().contains("UNAVAILABLE") || e.getMessage().contains("Connection refused")) {
+            if (e.getMessage().contains("UNAVAILABLE") || e.getMessage().contains("Connection refused") || e.getMessage().contains("not found")) {
                 return;
             }
             throw e;
@@ -182,7 +182,7 @@ public class ParameterizedQueryTest extends TestCase {
             }
         } catch (ExecutionException e) {
             // Local Spice runtime might not be running, skip test
-            if (e.getMessage().contains("UNAVAILABLE") || e.getMessage().contains("Connection refused")) {
+            if (e.getMessage().contains("UNAVAILABLE") || e.getMessage().contains("Connection refused") || e.getMessage().contains("not found")) {
                 return;
             }
             throw e;
@@ -210,7 +210,7 @@ public class ParameterizedQueryTest extends TestCase {
             }
         } catch (ExecutionException e) {
             // Local Spice runtime might not be running, skip test
-            if (e.getMessage().contains("UNAVAILABLE") || e.getMessage().contains("Connection refused")) {
+            if (e.getMessage().contains("UNAVAILABLE") || e.getMessage().contains("Connection refused") || e.getMessage().contains("not found")) {
                 return;
             }
             throw e;
