@@ -22,6 +22,7 @@ SOFTWARE.
 
 package ai.spice;
 
+import java.net.URI;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.arrow.flight.FlightStream;
@@ -44,7 +45,8 @@ public class FlightQueryTest
         try {
             SpiceClient spiceClient = SpiceClient.builder()
                     .withApiKey(apiKey)
-                    .withSpiceCloud()
+                    .withHttpAddress(new URI("https://us-west-2-prod-aws-data.spiceai.io"))
+                    .withFlightAddress(new URI("https://us-west-2-prod-aws-flight.spiceai.io:443"))
                     .build();
 
             String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 10;";

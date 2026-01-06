@@ -23,6 +23,7 @@ SOFTWARE.
 package ai.spice;
 
 import java.math.BigDecimal;
+import java.net.URI;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.concurrent.ExecutionException;
@@ -53,7 +54,8 @@ public class ParameterizedQueryTest extends TestCase {
 
         try (SpiceClient spiceClient = SpiceClient.builder()
                 .withApiKey(apiKey)
-                .withSpiceCloud()
+                .withHttpAddress(new URI("https://us-west-2-prod-aws-data.spiceai.io"))
+                .withFlightAddress(new URI("https://us-west-2-prod-aws-flight.spiceai.io:443"))
                 .build()) {
 
             // Test with float parameter - taxi_trips available in Spice Cloud
