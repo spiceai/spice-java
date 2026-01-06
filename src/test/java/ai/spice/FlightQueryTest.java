@@ -45,8 +45,8 @@ public class FlightQueryTest
         try {
             SpiceClient spiceClient = SpiceClient.builder()
                     .withApiKey(apiKey) // https://spice.ai/spiceai/quickstart
-                    .withHttpAddress(new URI("https://us-east-1-prod-aws-data.spiceai.io"))
-                    .withFlightAddress(new URI("https://us-east-1-prod-aws-flight.spiceai.io:443"))
+                    .withHttpAddress(new URI("https://data.spiceai.io"))
+                    .withFlightAddress(new URI("https://flight.spiceai.io:443"))
                     .build();
 
             String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 10;";

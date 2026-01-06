@@ -54,8 +54,8 @@ public class ParameterizedQueryTest extends TestCase {
 
         try (SpiceClient spiceClient = SpiceClient.builder()
                 .withApiKey(apiKey)
-                .withHttpAddress(new URI("https://us-west-2-prod-aws-data.spiceai.io"))
-                .withFlightAddress(new URI("https://us-west-2-prod-aws-flight.spiceai.io:443"))
+                .withHttpAddress(new URI("https://data.spiceai.io"))
+                .withFlightAddress(new URI("https://flight.spiceai.io:443"))
                 .build()) {
 
             // Test with float parameter - taxi_trips available in Spice Cloud
