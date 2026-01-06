@@ -39,8 +39,27 @@ jobs:
       - name: Build
         run: make build
 
+      - name: Install Spice (https://install.spiceai.org)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl https://install.spiceai.org | /bin/bash
+          echo "$HOME/.spice/bin" >> $GITHUB_PATH
+          $HOME/.spice/bin/spice install
+
+      - name: Init and start spice app
+        run: |
+          spice init spice_qs
+          cd spice_qs
+          spice add spiceai/quickstart
+          spice run &> spice.log &
+          # time to initialize added dataset
+          sleep 10
+
       - name: Run tests
         run: make test
+        env:
+          API_KEY: ${{ secrets.SPICE_CLOUD_QUICKSTART_API_KEY }}
 
       - name: Publish to Maven Central
         env:
