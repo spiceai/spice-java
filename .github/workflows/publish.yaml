@@ -9,6 +9,8 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
 
     steps:
       - name: Checkout code
@@ -21,9 +23,24 @@ jobs:
           java-version: 17
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          cache: maven
+
+      - name: Verify version consistency
+        run: |
+          POM_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          JAVA_VERSION=$(grep -oP 'SPICE_JAVA_VERSION = "\K[^"]+' src/main/java/ai/spice/Version.java)
+          echo "pom.xml version: $POM_VERSION"
+          echo "Version.java version: $JAVA_VERSION"
+          if [ "$POM_VERSION" != "$JAVA_VERSION" ]; then
+            echo "ERROR: Version mismatch between pom.xml ($POM_VERSION) and Version.java ($JAVA_VERSION)"
+            exit 1
+          fi
 
       - name: Build
         run: make build
+
+      - name: Run tests
+        run: make test
 
       - name: Publish to Maven Central
         env:
@@ -32,4 +49,3 @@ jobs:
           MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
         run: make publish
-      

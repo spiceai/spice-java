@@ -12,7 +12,7 @@ Add the following dependency to your Maven project:
 <dependency>
   <groupId>ai.spice</groupId>
   <artifactId>spiceai</artifactId>
-  <version>0.4.0</version>
+  <version>0.5.0</version>
   <scope>compile</scope>
 </dependency>
 ```
@@ -22,7 +22,7 @@ Add the following dependency to your Maven project:
 Add the following dependency to your Gradle project:
 
 ```groovy
-implementation 'ai.spice:spiceai:0.4.0'
+implementation 'ai.spice:spiceai:0.5.0'
 ```
 
 ### Manual installation
@@ -37,13 +37,11 @@ mvn package -Dmaven.test.skip=true
 
 This library supports the following Java implementations:
 
-- OpenJDK 11
-- OpenJDK 17
-- OpenJDK 21
-- OracleJDK 11
-- OracleJDK 17
-- OracleJDK 21
-- OracleJDK 22
+| Distribution              | Versions                       |
+| ------------------------- | ------------------------------ |
+| OpenJDK (Microsoft Build) | 11, 17, 21 (LTS)               |
+| OpenJDK (Eclipse Temurin) | 21 (LTS), 23, 24               |
+| Oracle JDK                | 17, 21 (LTS), 23, 24, 25 (LTS) |
 
 ## Usage
 
@@ -122,6 +120,89 @@ SpiceClient client = SpiceClient.builder()
 Retries are performed for connection and system internal errors. It is the SDK user's responsibility to properly
 handle other errors, for example RESOURCE_EXHAUSTED (HTTP 429).
 
+### Parameterized Queries (Recommended)
+
+The SDK supports parameterized queries using ADBC (Arrow Database Connectivity), which is the recommended approach for queries with user input to prevent SQL injection:
+
+```java
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.ipc.ArrowReader;
+import ai.spice.SpiceClient;
+import ai.spice.Param;
+
+public class Example {
+    public static void main(String[] args) {
+        try (SpiceClient client = SpiceClient.builder().build()) {
+
+            // Query with automatic type inference
+            ArrowReader reader = client.queryWithParams(
+                "SELECT * FROM taxi_trips WHERE trip_distance > $1 LIMIT 10",
+                5.0);  // Double is inferred as Float64
+
+            while (reader.loadNextBatch()) {
+                VectorSchemaRoot root = reader.getVectorSchemaRoot();
+                System.out.println(root.contentToTSVString());
+            }
+            reader.close();
+
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+    }
+}
+```
+
+#### Multiple Parameters
+
+Use positional placeholders ($1, $2, etc.) for multiple parameters:
+
+```java
+ArrowReader reader = client.queryWithParams(
+    "SELECT * FROM taxi_trips WHERE trip_distance > $1 AND fare_amount > $2 LIMIT 10",
+    5.0, 20.0);
+```
+
+#### Explicit Type Control
+
+For precise control over Arrow types, use the `Param` factory methods:
+
+```java
+import ai.spice.Param;
+
+// Explicit type specification
+ArrowReader reader = client.queryWithParams(
+    "SELECT * FROM orders WHERE order_id = $1 AND amount >= $2",
+    Param.int64(12345),
+    Param.decimal128(new BigDecimal("99.99"), 10, 2));
+```
+
+**Available typed parameter constructors:**
+
+- **Integers**: `int8`, `int16`, `int32`, `int64`, `uint8`, `uint16`, `uint32`, `uint64`
+- **Floating point**: `float16`, `float32`, `float64`
+- **Strings**: `string`, `largeString`
+- **Binary**: `binary`, `largeBinary`, `fixedSizeBinary`
+- **Boolean**: `bool`
+- **Date/Time**: `date32`, `date64`, `time32`, `time64`, `timestamp`, `duration`
+- **Decimals**: `decimal128`, `decimal256`
+- **Null**: `nullValue`
+
+Or use the generic constructors:
+
+- `Param.of(value)` - Creates a parameter with automatic type inference
+- `Param.of(value, arrowType)` - Creates a parameter with explicit Arrow type
+
+**Supported parameter types with automatic type inference:**
+
+- Integers: `int`, `byte`, `short`, `long`
+- Floating point: `float`, `double`
+- String: `String`
+- Boolean: `boolean`
+- Binary: `byte[]`
+- Temporal: `LocalDate`, `LocalTime`, `LocalDateTime`, `Duration`
+- Decimal: `BigDecimal`
+- Null: `null`
+
 ### Memory Configuration
 
 The `SpiceClient` uses an Arrow `RootAllocator` for managing off-heap memory. By default, it uses all available memory. You can configure the memory limit using megabytes:
@@ -131,6 +212,69 @@ SpiceClient client = SpiceClient.builder()
     .withArrowMemoryLimitMB(1024) // 1GB limit
     .build();
 ```
+
+### Iterating Through Results
+
+For more control over query results, you can iterate through rows and access individual field values:
+
+```java
+import org.apache.arrow.flight.FlightStream;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float8Vector;
+import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.Field;
+
+try (SpiceClient client = SpiceClient.builder().build()) {
+    FlightStream stream = client.query("SELECT * FROM taxi_trips LIMIT 10;");
+
+    while (stream.next()) {
+        try (VectorSchemaRoot root = stream.getRoot()) {
+            int rowCount = root.getRowCount();
+
+            // Print column names and types
+            for (Field field : root.getSchema().getFields()) {
+                System.out.printf("Column: %s, Type: %s%n", field.getName(), field.getType());
+            }
+
+            // Iterate through rows generically
+            for (int row = 0; row < rowCount; row++) {
+                for (FieldVector vector : root.getFieldVectors()) {
+                    String columnName = vector.getName();
+                    Object value = vector.isNull(row) ? null : vector.getObject(row);
+                    System.out.printf("%s = %s%n", columnName, value);
+                }
+            }
+
+            // Access specific columns with type safety
+            FieldVector fareVector = root.getVector("fare_amount");
+            if (fareVector instanceof Float8Vector) {
+                Float8Vector fareVec = (Float8Vector) fareVector;
+                for (int row = 0; row < rowCount; row++) {
+                    if (!fareVec.isNull(row)) {
+                        double fare = fareVec.get(row);
+                        System.out.printf("Fare: $%.2f%n", fare);
+                    }
+                }
+            }
+
+            // Access string columns
+            FieldVector vendorVector = root.getVector("vendor_id");
+            if (vendorVector instanceof VarCharVector) {
+                VarCharVector strVec = (VarCharVector) vendorVector;
+                for (int row = 0; row < rowCount; row++) {
+                    if (!strVec.isNull(row)) {
+                        String vendorId = new String(strVec.get(row), java.nio.charset.StandardCharsets.UTF_8);
+                        System.out.printf("Vendor: %s%n", vendorId);
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+See [ExampleIteratingResults.java](/src/main/java/ai/spice/example/ExampleIteratingResults.java) for a comprehensive example.
 
 ### Spice.ai Runtime commands
 
@@ -147,6 +291,40 @@ client.refresh("taxi_trips")
 
 ```
 
+### Logging
+
+The SDK uses SLF4J for logging, allowing you to plug in your preferred logging implementation (Logback, Log4j2, java.util.logging, etc.).
+
+**Adding a logging implementation (Maven):**
+
+```xml
+<!-- Using Logback -->
+<dependency>
+    <groupId>ch.qos.logback</groupId>
+    <artifactId>logback-classic</artifactId>
+    <version>1.5.18</version>
+</dependency>
+
+<!-- Or using SLF4J Simple (console output) -->
+<dependency>
+    <groupId>org.slf4j</groupId>
+    <artifactId>slf4j-simple</artifactId>
+    <version>2.0.17</version>
+</dependency>
+```
+
+**Log levels used:**
+
+- `DEBUG` - Client initialization, query execution, connection lifecycle
+- `WARN` - Recoverable errors during resource cleanup
+- `ERROR` - Query failures, connection errors
+
+To enable debug logging with `slf4j-simple`, set the system property:
+
+```bash
+-Dorg.slf4j.simpleLogger.defaultLogLevel=debug
+```
+
 ## 🤝 Connect with us
 
-Use [issues](https://github.com/spiceai/spice-java/issues),  [hey@spice.ai](mailto:hey@spice.ai) or [Discord](https://discord.gg/kZnTfneP5u) to send us feedback, suggestion or if you need help installing or using the library.
+Use [issues](https://github.com/spiceai/spice-java/issues), [hey@spice.ai](mailto:hey@spice.ai) or [Slack](https://spiceai.org/slack) to send us feedback, suggestions, or if you need help installing or using the library.
