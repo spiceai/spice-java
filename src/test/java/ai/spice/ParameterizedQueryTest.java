@@ -56,17 +56,17 @@ public class ParameterizedQueryTest extends TestCase {
                 .withSpiceCloud()
                 .build()) {
 
-            // Test with integer parameter
-            String sql = "SELECT c_custkey, c_name FROM tpch.customer WHERE c_custkey > $1 ORDER BY c_custkey LIMIT 5";
-            try (ArrowReader reader = spiceClient.queryWithParams(sql, 100)) {
+            // Test with float parameter - taxi_trips available in Spice Cloud
+            String sql = "SELECT tpep_pickup_datetime, total_amount FROM taxi_trips WHERE total_amount > $1 ORDER BY total_amount LIMIT 5";
+            try (ArrowReader reader = spiceClient.queryWithParams(sql, 10.0)) {
                 int totalRows = 0;
 
                 while (reader.loadNextBatch()) {
                     VectorSchemaRoot root = reader.getVectorSchemaRoot();
-                    assertTrue("Schema should have c_custkey field",
-                            root.getSchema().findField("c_custkey") != null);
-                    assertTrue("Schema should have c_name field",
-                            root.getSchema().findField("c_name") != null);
+                    assertTrue("Schema should have tpep_pickup_datetime field",
+                            root.getSchema().findField("tpep_pickup_datetime") != null);
+                    assertTrue("Schema should have total_amount field",
+                            root.getSchema().findField("total_amount") != null);
                     totalRows += root.getRowCount();
                 }
 
