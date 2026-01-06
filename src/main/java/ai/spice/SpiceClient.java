@@ -451,6 +451,7 @@ public class SpiceClient implements AutoCloseable {
      */
     private ArrowReader executeParameterizedQuery(String sql, Object... params) throws AdbcException {
         AdbcStatement stmt = adbcConnection.createStatement();
+        VectorSchemaRoot paramRoot = null;
 
         try {
             // Set the query
@@ -461,13 +462,29 @@ public class SpiceClient implements AutoCloseable {
 
             // Bind parameters if provided
             if (params != null && params.length > 0) {
-                bindParameters(stmt, params);
+                paramRoot = createParameterRoot(params);
+                stmt.bind(paramRoot);
             }
 
-            // Execute and return the reader
+            // Execute the query - at this point parameters have been serialized
             AdbcStatement.QueryResult result = stmt.executeQuery();
-            return result.getReader();
+            ArrowReader reader = result.getReader();
+            
+            // Now we can safely close the parameter root since it has been sent to server
+            if (paramRoot != null) {
+                paramRoot.close();
+            }
+            
+            return reader;
         } catch (AdbcException e) {
+            // Clean up on error
+            if (paramRoot != null) {
+                try {
+                    paramRoot.close();
+                } catch (Exception closeEx) {
+                    // Ignore close exception
+                }
+            }
             try {
                 stmt.close();
             } catch (Exception closeEx) {
@@ -480,14 +497,10 @@ public class SpiceClient implements AutoCloseable {
     }
 
     /**
-     * Binds parameters to an ADBC statement.
-     * Handles both plain Java values (with type inference) and Param instances.
+     * Creates a VectorSchemaRoot containing the parameter values.
+     * The caller is responsible for closing the returned root.
      */
-    private void bindParameters(AdbcStatement stmt, Object... params) throws AdbcException {
-        if (params == null || params.length == 0) {
-            return;
-        }
-
+    private VectorSchemaRoot createParameterRoot(Object... params) throws AdbcException {
         // Extract values and determine types
         final int numParams = params.length;
         Object[] values = new Object[numParams];
@@ -520,20 +533,22 @@ public class SpiceClient implements AutoCloseable {
         Schema schema = new Schema(fields);
 
         // Create a VectorSchemaRoot and populate it
-        try (VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator)) {
-            root.allocateNew();
+        VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator);
+        root.allocateNew();
 
-            // Append values to the vectors
-            for (int i = 0; i < numParams; i++) {
-                FieldVector vector = root.getVector(i);
-                appendValueToVector(vector, 0, values[i], types[i]);
-            }
-
-            root.setRowCount(1);
-
-            // Bind the parameters
-            stmt.bind(root);
+        // Append values to the vectors and set value count for each
+        for (int i = 0; i < numParams; i++) {
+            FieldVector vector = root.getVector(i);
+            appendValueToVector(vector, 0, values[i], types[i]);
+            vector.setValueCount(1);
         }
+
+        root.setRowCount(1);
+        
+        logger.debug("Created parameter root: rowCount={}, schema={}", 
+            root.getRowCount(), root.getSchema());
+
+        return root;
     }
 
     // Cached ArrowTypes for type inference (immutable, thread-safe)
@@ -628,6 +643,7 @@ public class SpiceClient implements AutoCloseable {
 
     /**
      * Appends a value to an Arrow vector at the specified index.
+     * Uses setSafe methods to properly handle validity buffer and auto-expansion.
      */
     @SuppressWarnings("deprecation")
     private void appendValueToVector(FieldVector vector, int index, Object value, ArrowType type)
@@ -638,108 +654,108 @@ public class SpiceClient implements AutoCloseable {
         }
 
         try {
-            // Integer vectors
+            // Integer vectors - use setSafe for proper validity buffer handling
             if (vector instanceof TinyIntVector) {
-                ((TinyIntVector) vector).set(index, ((Number) value).byteValue());
+                ((TinyIntVector) vector).setSafe(index, ((Number) value).byteValue());
             } else if (vector instanceof SmallIntVector) {
-                ((SmallIntVector) vector).set(index, ((Number) value).shortValue());
+                ((SmallIntVector) vector).setSafe(index, ((Number) value).shortValue());
             } else if (vector instanceof IntVector) {
-                ((IntVector) vector).set(index, ((Number) value).intValue());
+                ((IntVector) vector).setSafe(index, ((Number) value).intValue());
             } else if (vector instanceof BigIntVector) {
-                ((BigIntVector) vector).set(index, ((Number) value).longValue());
+                ((BigIntVector) vector).setSafe(index, ((Number) value).longValue());
             }
             // Unsigned integer vectors
             else if (vector instanceof UInt1Vector) {
-                ((UInt1Vector) vector).set(index, ((Number) value).byteValue());
+                ((UInt1Vector) vector).setSafe(index, ((Number) value).byteValue());
             } else if (vector instanceof UInt2Vector) {
                 // Convert char to int for UInt2Vector
                 if (value instanceof Character) {
-                    ((UInt2Vector) vector).set(index, (int) ((Character) value).charValue());
+                    ((UInt2Vector) vector).setSafe(index, (int) ((Character) value).charValue());
                 } else {
-                    ((UInt2Vector) vector).set(index, ((Number) value).intValue());
+                    ((UInt2Vector) vector).setSafe(index, ((Number) value).intValue());
                 }
             } else if (vector instanceof UInt4Vector) {
-                ((UInt4Vector) vector).set(index, ((Number) value).intValue());
+                ((UInt4Vector) vector).setSafe(index, ((Number) value).intValue());
             } else if (vector instanceof UInt8Vector) {
-                ((UInt8Vector) vector).set(index, ((Number) value).longValue());
+                ((UInt8Vector) vector).setSafe(index, ((Number) value).longValue());
             }
             // Floating point vectors
             else if (vector instanceof Float4Vector) {
-                ((Float4Vector) vector).set(index, ((Number) value).floatValue());
+                ((Float4Vector) vector).setSafe(index, ((Number) value).floatValue());
             } else if (vector instanceof Float8Vector) {
-                ((Float8Vector) vector).set(index, ((Number) value).doubleValue());
+                ((Float8Vector) vector).setSafe(index, ((Number) value).doubleValue());
             }
             // String vectors
             else if (vector instanceof VarCharVector) {
                 byte[] bytes = value.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                ((VarCharVector) vector).set(index, bytes);
+                ((VarCharVector) vector).setSafe(index, bytes);
             } else if (vector instanceof LargeVarCharVector) {
                 byte[] bytes = value.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                ((LargeVarCharVector) vector).set(index, bytes);
+                ((LargeVarCharVector) vector).setSafe(index, bytes);
             }
             // Binary vectors
             else if (vector instanceof VarBinaryVector) {
-                ((VarBinaryVector) vector).set(index, (byte[]) value);
+                ((VarBinaryVector) vector).setSafe(index, (byte[]) value);
             } else if (vector instanceof LargeVarBinaryVector) {
-                ((LargeVarBinaryVector) vector).set(index, (byte[]) value);
+                ((LargeVarBinaryVector) vector).setSafe(index, (byte[]) value);
             }
             // Boolean vector
             else if (vector instanceof BitVector) {
-                ((BitVector) vector).set(index, ((Boolean) value) ? 1 : 0);
+                ((BitVector) vector).setSafe(index, ((Boolean) value) ? 1 : 0);
             }
             // Date vectors
             else if (vector instanceof DateDayVector) {
                 LocalDate date = (LocalDate) value;
                 int daysSinceEpoch = (int) date.toEpochDay();
-                ((DateDayVector) vector).set(index, daysSinceEpoch);
+                ((DateDayVector) vector).setSafe(index, daysSinceEpoch);
             } else if (vector instanceof DateMilliVector) {
                 LocalDate date = (LocalDate) value;
                 long millisSinceEpoch = date.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
-                ((DateMilliVector) vector).set(index, millisSinceEpoch);
+                ((DateMilliVector) vector).setSafe(index, millisSinceEpoch);
             }
             // Time vectors
             else if (vector instanceof TimeSecVector) {
                 LocalTime time = (LocalTime) value;
-                ((TimeSecVector) vector).set(index, time.toSecondOfDay());
+                ((TimeSecVector) vector).setSafe(index, time.toSecondOfDay());
             } else if (vector instanceof TimeMilliVector) {
                 LocalTime time = (LocalTime) value;
-                ((TimeMilliVector) vector).set(index, (int) (time.toNanoOfDay() / 1_000_000));
+                ((TimeMilliVector) vector).setSafe(index, (int) (time.toNanoOfDay() / 1_000_000));
             } else if (vector instanceof TimeMicroVector) {
                 LocalTime time = (LocalTime) value;
-                ((TimeMicroVector) vector).set(index, time.toNanoOfDay() / 1_000);
+                ((TimeMicroVector) vector).setSafe(index, time.toNanoOfDay() / 1_000);
             } else if (vector instanceof TimeNanoVector) {
                 LocalTime time = (LocalTime) value;
-                ((TimeNanoVector) vector).set(index, time.toNanoOfDay());
+                ((TimeNanoVector) vector).setSafe(index, time.toNanoOfDay());
             }
             // Timestamp vectors
             else if (vector instanceof TimeStampSecVector) {
                 LocalDateTime dt = (LocalDateTime) value;
-                ((TimeStampSecVector) vector).set(index, dt.toEpochSecond(ZoneOffset.UTC));
+                ((TimeStampSecVector) vector).setSafe(index, dt.toEpochSecond(ZoneOffset.UTC));
             } else if (vector instanceof TimeStampSecTZVector) {
                 LocalDateTime dt = (LocalDateTime) value;
-                ((TimeStampSecTZVector) vector).set(index, dt.toEpochSecond(ZoneOffset.UTC));
+                ((TimeStampSecTZVector) vector).setSafe(index, dt.toEpochSecond(ZoneOffset.UTC));
             } else if (vector instanceof TimeStampMilliVector) {
                 LocalDateTime dt = (LocalDateTime) value;
-                ((TimeStampMilliVector) vector).set(index, dt.toInstant(ZoneOffset.UTC).toEpochMilli());
+                ((TimeStampMilliVector) vector).setSafe(index, dt.toInstant(ZoneOffset.UTC).toEpochMilli());
             } else if (vector instanceof TimeStampMilliTZVector) {
                 LocalDateTime dt = (LocalDateTime) value;
-                ((TimeStampMilliTZVector) vector).set(index, dt.toInstant(ZoneOffset.UTC).toEpochMilli());
+                ((TimeStampMilliTZVector) vector).setSafe(index, dt.toInstant(ZoneOffset.UTC).toEpochMilli());
             } else if (vector instanceof TimeStampMicroVector) {
                 LocalDateTime dt = (LocalDateTime) value;
                 long epochMicro = dt.toEpochSecond(ZoneOffset.UTC) * 1_000_000 + dt.getNano() / 1_000;
-                ((TimeStampMicroVector) vector).set(index, epochMicro);
+                ((TimeStampMicroVector) vector).setSafe(index, epochMicro);
             } else if (vector instanceof TimeStampMicroTZVector) {
                 LocalDateTime dt = (LocalDateTime) value;
                 long epochMicro = dt.toEpochSecond(ZoneOffset.UTC) * 1_000_000 + dt.getNano() / 1_000;
-                ((TimeStampMicroTZVector) vector).set(index, epochMicro);
+                ((TimeStampMicroTZVector) vector).setSafe(index, epochMicro);
             } else if (vector instanceof TimeStampNanoVector) {
                 LocalDateTime dt = (LocalDateTime) value;
                 long epochNano = dt.toEpochSecond(ZoneOffset.UTC) * 1_000_000_000 + dt.getNano();
-                ((TimeStampNanoVector) vector).set(index, epochNano);
+                ((TimeStampNanoVector) vector).setSafe(index, epochNano);
             } else if (vector instanceof TimeStampNanoTZVector) {
                 LocalDateTime dt = (LocalDateTime) value;
                 long epochNano = dt.toEpochSecond(ZoneOffset.UTC) * 1_000_000_000 + dt.getNano();
-                ((TimeStampNanoTZVector) vector).set(index, epochNano);
+                ((TimeStampNanoTZVector) vector).setSafe(index, epochNano);
             }
             // Duration vector
             else if (vector instanceof DurationVector) {
@@ -762,13 +778,13 @@ public class SpiceClient implements AutoCloseable {
                     default:
                         durationValue = duration.toNanos() / 1_000; // Default to microseconds
                 }
-                ((DurationVector) vector).set(index, durationValue);
+                ((DurationVector) vector).setSafe(index, durationValue);
             }
             // Decimal vector
             else if (vector instanceof DecimalVector) {
                 DecimalVector decVector = (DecimalVector) vector;
                 BigDecimal bd = (BigDecimal) value;
-                decVector.set(index, bd);
+                decVector.setSafe(index, bd);
             } else {
                 throw new AdbcException("Unsupported vector type: " + vector.getClass().getName(),
                         null, AdbcStatusCode.UNKNOWN, null, 0);

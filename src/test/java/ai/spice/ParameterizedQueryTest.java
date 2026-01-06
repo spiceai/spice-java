@@ -82,17 +82,17 @@ public class ParameterizedQueryTest extends TestCase {
     public void testParameterizedQuerySpiceOSS() throws Exception {
         try (SpiceClient spiceClient = SpiceClient.builder().build()) {
 
-            // Test with float parameter
-            String sql = "SELECT trip_distance, fare_amount FROM taxi_trips WHERE trip_distance > $1 ORDER BY trip_distance LIMIT 5";
-            try (ArrowReader reader = spiceClient.queryWithParams(sql, 10.0)) {
+            // Test with float parameter on tpch.orders
+            String sql = "SELECT o_orderkey, o_totalprice FROM tpch.orders WHERE o_totalprice > $1 ORDER BY o_totalprice LIMIT 5";
+            try (ArrowReader reader = spiceClient.queryWithParams(sql, 10000.0)) {
                 int totalRows = 0;
 
                 while (reader.loadNextBatch()) {
                     VectorSchemaRoot root = reader.getVectorSchemaRoot();
-                    assertTrue("Schema should have trip_distance field",
-                            root.getSchema().findField("trip_distance") != null);
-                    assertTrue("Schema should have fare_amount field",
-                            root.getSchema().findField("fare_amount") != null);
+                    assertTrue("Schema should have o_orderkey field",
+                            root.getSchema().findField("o_orderkey") != null);
+                    assertTrue("Schema should have o_totalprice field",
+                            root.getSchema().findField("o_totalprice") != null);
                     totalRows += root.getRowCount();
                 }
 
@@ -113,8 +113,8 @@ public class ParameterizedQueryTest extends TestCase {
     public void testMultipleParameters() throws Exception {
         try (SpiceClient spiceClient = SpiceClient.builder().build()) {
 
-            String sql = "SELECT trip_distance, fare_amount FROM taxi_trips WHERE trip_distance > $1 AND fare_amount > $2 LIMIT 5";
-            try (ArrowReader reader = spiceClient.queryWithParams(sql, 5.0, 20.0)) {
+            String sql = "SELECT o_orderkey, o_totalprice FROM tpch.orders WHERE o_totalprice > $1 AND o_custkey > $2 LIMIT 5";
+            try (ArrowReader reader = spiceClient.queryWithParams(sql, 5000.0, 100)) {
                 int totalRows = 0;
 
                 while (reader.loadNextBatch()) {
@@ -140,9 +140,9 @@ public class ParameterizedQueryTest extends TestCase {
     public void testStringParameter() throws Exception {
         try (SpiceClient spiceClient = SpiceClient.builder().build()) {
 
-            // Use store_and_fwd_flag which is a string column
-            String sql = "SELECT trip_distance, store_and_fwd_flag FROM taxi_trips WHERE store_and_fwd_flag = $1 LIMIT 5";
-            try (ArrowReader reader = spiceClient.queryWithParams(sql, "N")) {
+            // Use c_mktsegment which is a string column in tpch.customer
+            String sql = "SELECT c_custkey, c_mktsegment FROM tpch.customer WHERE c_mktsegment = $1 LIMIT 5";
+            try (ArrowReader reader = spiceClient.queryWithParams(sql, "BUILDING")) {
                 int totalRows = 0;
 
                 while (reader.loadNextBatch()) {
@@ -168,8 +168,8 @@ public class ParameterizedQueryTest extends TestCase {
     public void testExplicitParamTypes() throws Exception {
         try (SpiceClient spiceClient = SpiceClient.builder().build()) {
 
-            // Use explicit int64 type
-            String sql = "SELECT trip_distance, fare_amount, payment_type FROM taxi_trips WHERE payment_type = $1 LIMIT 5";
+            // Use explicit int64 type on tpch.customer
+            String sql = "SELECT c_custkey, c_name, c_nationkey FROM tpch.customer WHERE c_nationkey = $1 LIMIT 5";
             try (ArrowReader reader = spiceClient.queryWithParams(sql, Param.int64(1))) {
                 int totalRows = 0;
 
@@ -195,10 +195,10 @@ public class ParameterizedQueryTest extends TestCase {
     public void testMixedParameterTypes() throws Exception {
         try (SpiceClient spiceClient = SpiceClient.builder().build()) {
 
-            String sql = "SELECT trip_distance, fare_amount FROM taxi_trips WHERE trip_distance > $1 AND store_and_fwd_flag = $2 LIMIT 5";
+            String sql = "SELECT o_orderkey, o_totalprice FROM tpch.orders WHERE o_totalprice > $1 AND o_orderstatus = $2 LIMIT 5";
             try (ArrowReader reader = spiceClient.queryWithParams(sql,
-                    Param.float64(5.0),
-                    Param.string("N"))) {
+                    Param.float64(5000.0),
+                    Param.string("O"))) {
                 int totalRows = 0;
 
                 while (reader.loadNextBatch()) {

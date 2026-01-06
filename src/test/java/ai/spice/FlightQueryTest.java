@@ -46,7 +46,7 @@ public class FlightQueryTest
                     .withSpiceCloud()
                     .build();
 
-            String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 10;";
+            String sql = "SELECT c_custkey, c_name, c_nationkey from tpch.customer limit 10;";
             FlightStream res = spiceClient.query(sql);
 
             int totalRows = 0;
@@ -73,7 +73,7 @@ public class FlightQueryTest
             SpiceClient spiceClient = SpiceClient.builder()
                     .build();
 
-            String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 10;";
+            String sql = "SELECT c_custkey, c_name, c_nationkey from tpch.customer limit 10;";
             FlightStream res = spiceClient.query(sql);
 
             int totalRows = 0;
@@ -100,10 +100,10 @@ public class FlightQueryTest
             SpiceClient spiceClient = SpiceClient.builder()
                     .build();
 
-            spiceClient.refreshDataset("taxi_trips");
+            spiceClient.refreshDataset("tpch.customer");
 
             try {
-                spiceClient.refreshDataset("taxi_trips_does_not_exist");
+                spiceClient.refreshDataset("nonexistent_dataset");
                 fail("Should throw exception when unable to refresh dataset");
             } catch (Exception e) {
                 assertTrue("Should correctly pass response message when unable to refresh table",
@@ -116,7 +116,7 @@ public class FlightQueryTest
 
     public void testRefreshWithOptionsSpiceOSS() throws ExecutionException, InterruptedException {
         try {
-            String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 20;";
+            String sql = "SELECT c_custkey, c_name, c_nationkey from tpch.customer limit 20;";
             SpiceClient spiceClient = SpiceClient.builder()
                     .build();
 
@@ -131,10 +131,10 @@ public class FlightQueryTest
 
             assertEquals("Expected row count does not match", 20, preRefreshRows);
 
-            RefreshOptions opts = new RefreshOptions().withRefreshSql("SELECT * FROM taxi_trips limit 10")
+            RefreshOptions opts = new RefreshOptions().withRefreshSql("SELECT * FROM tpch.customer limit 10")
                     .withRefreshJitterMax("1s");
 
-            spiceClient.refreshDataset("taxi_trips", opts);
+            spiceClient.refreshDataset("tpch.customer", opts);
 
             // wait a couple seconds to let refresh run
             Thread.sleep(10000);
