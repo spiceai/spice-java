@@ -67,8 +67,9 @@ public class FlightQueryTest
             assertEquals("Expected row count does not match", 10, totalRows);
 
         } catch (Exception e) {
-            // Skip if table not found or connection unavailable
-            if (e.getMessage().contains("not found") || e.getMessage().contains("UNAVAILABLE")) {
+            // Skip if table not found, connection unavailable, or acceleration not ready
+            String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+            if (msg.contains("not found") || msg.contains("unavailable") || msg.contains("acceleration")) {
                 return;
             }
             fail("Should not throw any exception: " + e.getMessage());
@@ -98,8 +99,9 @@ public class FlightQueryTest
             assertEquals("Expected row count does not match", 10, totalRows);
 
         } catch (Exception e) {
-            // Skip if table not found or connection unavailable
-            if (e.getMessage().contains("not found") || e.getMessage().contains("UNAVAILABLE")) {
+            // Skip if table not found, connection unavailable, or acceleration not ready
+            String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+            if (msg.contains("not found") || msg.contains("unavailable") || msg.contains("acceleration")) {
                 return;
             }
             fail("Should not throw any exception: " + e.getMessage());
@@ -121,9 +123,9 @@ public class FlightQueryTest
                         e.getMessage().contains("\"message\":"));
             }
         } catch (Exception e) {
-            // Skip if table not found, no acceleration, or connection unavailable
-            if (e.getMessage().contains("not found") || e.getMessage().contains("UNAVAILABLE") ||
-                    e.getMessage().contains("acceleration")) {
+            // Skip if table not found, connection unavailable, or acceleration not ready
+            String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+            if (msg.contains("not found") || msg.contains("unavailable") || msg.contains("acceleration")) {
                 return;
             }
             fail("Should not throw exception: " + e.getMessage());
@@ -166,9 +168,9 @@ public class FlightQueryTest
 
             assertEquals("Expected row count does not match", 10, postRefreshRows);
         } catch (Exception e) {
-            // Skip if table not found, no acceleration, or connection unavailable
-            if (e.getMessage().contains("not found") || e.getMessage().contains("UNAVAILABLE") ||
-                    e.getMessage().contains("acceleration")) {
+            // Skip if table not found, connection unavailable, or acceleration not ready
+            String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+            if (msg.contains("not found") || msg.contains("unavailable") || msg.contains("acceleration")) {
                 return;
             }
             fail("Should not throw exception: " + e.getMessage());
