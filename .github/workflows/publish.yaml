@@ -41,6 +41,8 @@ jobs:
 
       - name: Run tests
         run: make test
+        env:
+          API_KEY: ${{ secrets.SPICE_CLOUD_QUICKSTART_API_KEY }}
 
       - name: Publish to Maven Central
         env:
