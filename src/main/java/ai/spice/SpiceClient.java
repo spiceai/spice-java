@@ -133,9 +133,13 @@ public class SpiceClient implements AutoCloseable {
     // Cached Gson instance for JSON serialization (thread-safe)
     private static final Gson GSON = new Gson();
     
+    // Cap for large dataset results and metadata (~2 GiB, max safe signed-int value)
+    private static final int MAX_INBOUND_MESSAGE_SIZE = Integer.MAX_VALUE;
+    private static final int MAX_INBOUND_METADATA_SIZE = Integer.MAX_VALUE;
+
     // Cached HttpClient for refresh operations (thread-safe, connection pooling)
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
+            .connectTimeout(Duration.ofSeconds(15))
             .build();
     
     // Pre-computed parameter field names to avoid string concatenation in hot path
@@ -274,8 +278,8 @@ public class SpiceClient implements AutoCloseable {
                 .keepAliveTime(30, java.util.concurrent.TimeUnit.SECONDS)
                 .keepAliveTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
                 .keepAliveWithoutCalls(true)
-                .maxInboundMessageSize(Integer.MAX_VALUE)
-                .maxInboundMetadataSize(Integer.MAX_VALUE);
+                .maxInboundMessageSize(MAX_INBOUND_MESSAGE_SIZE)
+                .maxInboundMetadataSize(MAX_INBOUND_METADATA_SIZE);
         ManagedChannel channel = channelBuilder.build();
 
         try {
