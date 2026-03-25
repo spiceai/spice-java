@@ -170,14 +170,17 @@ public class ResetTest extends TestCase {
     }
 
     /**
-     * reset() after close() should not throw.
-     * (The flight client is already null after close, reset handles that.)
+     * reset() after close() should throw IllegalStateException.
      */
     public void testResetAfterClose() throws Exception {
         SpiceClient client = SpiceClient.builder().build();
         client.close();
-        // reset on an already-closed client should be safe
-        client.reset();
+        try {
+            client.reset();
+            fail("Expected IllegalStateException when resetting a closed client");
+        } catch (IllegalStateException e) {
+            assertTrue(e.getMessage().contains("closed"));
+        }
     }
 
     /**

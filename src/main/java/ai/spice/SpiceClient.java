@@ -39,7 +39,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 
 import org.apache.arrow.adbc.core.AdbcConnection;
 import org.apache.arrow.adbc.core.AdbcDatabase;
@@ -154,6 +153,7 @@ public class SpiceClient implements AutoCloseable {
     private FlightSqlClient flightClient;
     private CredentialCallOption authCallOptions = null;
     private BufferAllocator allocator;
+    private boolean closed = false;
     
     // Cached retryers (immutable, thread-safe)
     private Retryer<ArrowReader> adbcRetryer;
@@ -268,8 +268,8 @@ public class SpiceClient implements AutoCloseable {
         }
         channelBuilder
                 // HTTP/2 keep-alive to detect dead/idle connections behind load balancers
-                .keepAliveTime(30, TimeUnit.SECONDS)
-                .keepAliveTimeout(10, TimeUnit.SECONDS)
+                .keepAliveTime(30, java.util.concurrent.TimeUnit.SECONDS)
+                .keepAliveTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
                 .keepAliveWithoutCalls(true)
                 .maxInboundMessageSize(Integer.MAX_VALUE)
                 .maxInboundMetadataSize(Integer.MAX_VALUE);
@@ -347,6 +347,9 @@ public class SpiceClient implements AutoCloseable {
      * }</pre>
      */
     public synchronized void reset() {
+        if (closed) {
+            throw new IllegalStateException("Cannot reset a closed SpiceClient");
+        }
         logger.info("Resetting SpiceClient transport");
 
         // Close ADBC resources (they maintain a separate Flight connection)
@@ -1011,6 +1014,10 @@ public class SpiceClient implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
+        if (closed) {
+            return;
+        }
+        closed = true;
         logger.debug("Closing SpiceClient");
         List<Exception> exceptions = new ArrayList<>();
 
