@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs exclusion filter for pre-existing findings.
+  These are findings in code that predates the introduction of SpotBugs.
+  They should be addressed in follow-up PRs.
+-->
+<FindBugsFilter>
+    <!-- Example code: dead stores are intentional (demonstrating all param types) -->
+    <Match>
+        <Package name="ai.spice.example"/>
+    </Match>
+
+    <!-- Config: dead store in getUserAgent() -->
+    <Match>
+        <Class name="ai.spice.Config"/>
+        <Bug pattern="DLS_DEAD_LOCAL_STORE"/>
+    </Match>
+
+    <!-- HeaderAuthMiddlewareFactory: internal representation exposure (by design, internal class) -->
+    <Match>
+        <Class name="ai.spice.HeaderAuthMiddlewareFactory"/>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!-- RefreshOptions: public fields are part of the public API -->
+    <Match>
+        <Class name="ai.spice.RefreshOptions"/>
+        <Bug pattern="PA_PUBLIC_PRIMITIVE_ATTRIBUTE"/>
+    </Match>
+
+    <!-- Constructor-throw warnings: these constructors intentionally validate/fail early -->
+    <Match>
+        <Bug pattern="CT_CONSTRUCTOR_THROW"/>
+    </Match>
+</FindBugsFilter>

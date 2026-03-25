@@ -1000,7 +1000,7 @@ public class SpiceClient implements AutoCloseable {
         }
     }
 
-    private FlightStream queryInternal(String sql) {
+    private synchronized FlightStream queryInternal(String sql) {
         ensureFlightClient();
         FlightInfo flightInfo = this.flightClient.execute(sql, authCallOptions);
         Ticket ticket = flightInfo.getEndpoints().get(0).getTicket();
