@@ -26,6 +26,9 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.arrow.flight.FlightStream;
@@ -38,6 +41,21 @@ import junit.framework.TestCase;
  * (keep-alive, dns:/// resolution, lazy rebuild).
  */
 public class ResetTest extends TestCase {
+
+    private boolean serverAvailable = false;
+
+    @Override
+    protected void setUp() throws Exception {
+        super.setUp();
+        try (SpiceClient probe = SpiceClient.builder().build()) {
+            try (FlightStream stream = probe.query("SELECT 1")) {
+                stream.next();
+            }
+            serverAvailable = true;
+        } catch (Exception e) {
+            serverAvailable = false;
+        }
+    }
 
     // ==================== reset() Happy Path ====================
 
@@ -204,28 +222,31 @@ public class ResetTest extends TestCase {
         final SpiceClient client = SpiceClient.builder().build();
         final int threadCount = 8;
         final CountDownLatch startLatch = new CountDownLatch(1);
-        final CountDownLatch doneLatch = new CountDownLatch(threadCount);
         final AtomicInteger errors = new AtomicInteger(0);
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
 
-        for (int i = 0; i < threadCount; i++) {
-            new Thread(() -> {
-                try {
-                    startLatch.await(); // all threads start at the same time
-                    client.reset();
-                } catch (Exception e) {
-                    errors.incrementAndGet();
-                } finally {
-                    doneLatch.countDown();
-                }
-            }).start();
+        try {
+            for (int i = 0; i < threadCount; i++) {
+                executor.submit(() -> {
+                    try {
+                        startLatch.await();
+                        client.reset();
+                    } catch (Exception e) {
+                        errors.incrementAndGet();
+                    }
+                });
+            }
+
+            startLatch.countDown(); // release all threads
+            executor.shutdown();
+            assertTrue("Concurrent reset should complete within 30s",
+                    executor.awaitTermination(30, TimeUnit.SECONDS));
+
+            assertEquals("No threads should have encountered errors", 0, errors.get());
+        } finally {
+            executor.shutdownNow();
+            client.close();
         }
-
-        startLatch.countDown(); // release all threads
-        assertTrue("Concurrent reset should complete within 30s",
-                doneLatch.await(30, java.util.concurrent.TimeUnit.SECONDS));
-
-        assertEquals("No threads should have encountered errors", 0, errors.get());
-        client.close();
     }
 
     /**
@@ -236,51 +257,52 @@ public class ResetTest extends TestCase {
         final SpiceClient client = SpiceClient.builder().build();
         final int iterations = 5;
         final CountDownLatch startLatch = new CountDownLatch(1);
-        final CountDownLatch doneLatch = new CountDownLatch(2);
         final List<Throwable> unexpectedErrors = new ArrayList<>();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
 
-        // Thread 1: repeated resets
-        new Thread(() -> {
-            try {
-                startLatch.await();
-                for (int i = 0; i < iterations; i++) {
-                    client.reset();
-                    Thread.sleep(10);
-                }
-            } catch (InterruptedException ignored) {
-            } finally {
-                doneLatch.countDown();
-            }
-        }).start();
-
-        // Thread 2: repeated queries
-        new Thread(() -> {
-            try {
-                startLatch.await();
-                for (int i = 0; i < iterations; i++) {
-                    try {
-                        FlightStream stream = client.query("SELECT 1");
-                        stream.close();
-                    } catch (NullPointerException e) {
-                        unexpectedErrors.add(e);
-                    } catch (Exception e) {
-                        // Connection errors are expected
+        try {
+            // Thread 1: repeated resets
+            executor.submit(() -> {
+                try {
+                    startLatch.await();
+                    for (int i = 0; i < iterations; i++) {
+                        client.reset();
+                        Thread.sleep(10);
                     }
-                    Thread.sleep(10);
+                } catch (InterruptedException ignored) {
                 }
-            } catch (InterruptedException ignored) {
-            } finally {
-                doneLatch.countDown();
-            }
-        }).start();
+            });
 
-        startLatch.countDown();
-        assertTrue("Concurrent reset+query should complete within 30s",
-                doneLatch.await(30, java.util.concurrent.TimeUnit.SECONDS));
+            // Thread 2: repeated queries
+            executor.submit(() -> {
+                try {
+                    startLatch.await();
+                    for (int i = 0; i < iterations; i++) {
+                        try {
+                            FlightStream stream = client.query("SELECT 1");
+                            stream.close();
+                        } catch (NullPointerException e) {
+                            unexpectedErrors.add(e);
+                        } catch (Exception e) {
+                            // Connection errors are expected
+                        }
+                        Thread.sleep(10);
+                    }
+                } catch (InterruptedException ignored) {
+                }
+            });
 
-        assertTrue("Should not get NullPointerException during concurrent reset+query: " + unexpectedErrors,
-                unexpectedErrors.isEmpty());
-        client.close();
+            startLatch.countDown();
+            executor.shutdown();
+            assertTrue("Concurrent reset+query should complete within 30s",
+                    executor.awaitTermination(30, TimeUnit.SECONDS));
+
+            assertTrue("Should not get NullPointerException during concurrent reset+query: " + unexpectedErrors,
+                    unexpectedErrors.isEmpty());
+        } finally {
+            executor.shutdownNow();
+            client.close();
+        }
     }
 
     // ==================== Construction / DNS / Keep-alive ====================
@@ -391,6 +413,8 @@ public class ResetTest extends TestCase {
      * reset() followed by query() actually returns data.
      */
     public void testResetThenQueryIntegration() throws Exception {
+        if (!serverAvailable) return;
+
         try (SpiceClient client = SpiceClient.builder().build()) {
             // First query (establishes connection)
             try (FlightStream stream1 = client.query(
@@ -414,14 +438,6 @@ public class ResetTest extends TestCase {
                 }
                 assertEquals("Second query after reset should return 2 rows", 2, rows2);
             }
-        } catch (Exception e) {
-            // Skip if no local runtime or TPC-H data available
-            String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-            if (msg.contains("unavailable") || msg.contains("connection refused")
-                    || msg.contains("not found") || msg.contains("io exception")) {
-                return;
-            }
-            fail("Unexpected error: " + e.getMessage());
         }
     }
 
@@ -430,6 +446,8 @@ public class ResetTest extends TestCase {
      * reset() followed by queryWithParams() actually returns data.
      */
     public void testResetThenQueryWithParamsIntegration() throws Exception {
+        if (!serverAvailable) return;
+
         try (SpiceClient client = SpiceClient.builder().build()) {
             // First query
             try (ArrowReader reader1 = client.queryWithParams(
@@ -455,13 +473,6 @@ public class ResetTest extends TestCase {
                 }
                 assertTrue("Second parameterized query after reset should return rows", rows2 > 0);
             }
-        } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-            if (msg.contains("unavailable") || msg.contains("connection refused")
-                    || msg.contains("not found") || msg.contains("io exception")) {
-                return;
-            }
-            fail("Unexpected error: " + e.getMessage());
         }
     }
 }

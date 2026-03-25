@@ -223,11 +223,20 @@ public class SpiceClient implements AutoCloseable {
                 : memoryLimitMB * BYTES_PER_MB;
         this.allocator = new RootAllocator(memoryLimitBytes);
 
-        // Build the Flight client (channel + auth handshake)
-        buildFlightClient();
+        try {
+            // Build the Flight client (channel + auth handshake)
+            buildFlightClient();
 
-        // Initialize cached retryers (immutable, built once)
-        initRetryers();
+            // Initialize cached retryers (immutable, built once)
+            initRetryers();
+        } catch (RuntimeException | Error e) {
+            try {
+                this.allocator.close();
+            } catch (Exception closeEx) {
+                e.addSuppressed(closeEx);
+            }
+            throw e;
+        }
 
         logger.debug("SpiceClient initialized - flightAddress={}, appId={}", this.flightAddress, this.appId);
     }

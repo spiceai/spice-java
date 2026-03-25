@@ -225,7 +225,10 @@ SpiceClient client = SpiceClient.builder()
     .withSpiceCloud()
     .build();
 
-// Long-lived usage with transport recovery
+// Long-lived usage with transport recovery.
+// isTransportFailure() is application-defined; check for
+// io.grpc.StatusRuntimeException with Status.UNAVAILABLE,
+// SSLHandshakeException, or similar transport-level errors.
 try {
     try (FlightStream stream = client.query(sql)) {
         // process results...
