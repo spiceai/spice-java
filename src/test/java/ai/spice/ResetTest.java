@@ -157,7 +157,8 @@ public class ResetTest extends TestCase {
         for (int i = 0; i < 3; i++) {
             client.reset();
             try {
-                client.query("SELECT 1");
+                FlightStream stream = client.query("SELECT 1");
+                stream.close();
             } catch (Exception e) {
                 // Connection errors are fine — we're testing the reset/rebuild cycle,
                 // not server availability. NPE would indicate a broken rebuild.
@@ -258,7 +259,8 @@ public class ResetTest extends TestCase {
                 startLatch.await();
                 for (int i = 0; i < iterations; i++) {
                     try {
-                        client.query("SELECT 1");
+                        FlightStream stream = client.query("SELECT 1");
+                        stream.close();
                     } catch (NullPointerException e) {
                         unexpectedErrors.add(e);
                     } catch (Exception e) {
@@ -371,7 +373,8 @@ public class ResetTest extends TestCase {
         client.reset();
 
         try {
-            client.query("SELECT 1");
+            FlightStream stream = client.query("SELECT 1");
+            stream.close();
         } catch (Exception e) {
             assertFalse("NPE after reset with custom config",
                     e instanceof NullPointerException);
