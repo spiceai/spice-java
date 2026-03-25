@@ -29,7 +29,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.arrow.flight.FlightStream;
-import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.ipc.ArrowReader;
 
 import junit.framework.TestCase;
@@ -74,8 +73,8 @@ public class ResetTest extends TestCase {
     }
 
     /**
-     * After reset(), close() should complete without errors
-     * (the Flight client is already nulled out; close handles null gracefully).
+     * After reset(), close() should complete without errors.
+     * reset() eagerly rebuilds the Flight client, so close() tears down the new connection.
      */
     public void testCloseAfterReset() throws Exception {
         SpiceClient client = SpiceClient.builder().build();
@@ -199,7 +198,7 @@ public class ResetTest extends TestCase {
 
     /**
      * Concurrent calls to reset() from multiple threads should not throw
-     * or corrupt state (all methods are synchronized).
+     * or corrupt the client's internal state (reset() is expected to be thread-safe).
      */
     public void testConcurrentResetDoesNotThrow() throws Exception {
         final SpiceClient client = SpiceClient.builder().build();

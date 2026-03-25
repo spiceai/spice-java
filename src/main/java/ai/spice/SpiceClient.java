@@ -153,7 +153,7 @@ public class SpiceClient implements AutoCloseable {
     private FlightSqlClient flightClient;
     private CredentialCallOption authCallOptions = null;
     private BufferAllocator allocator;
-    private boolean closed = false;
+    private volatile boolean closed = false;
     
     // Cached retryers (immutable, thread-safe)
     private Retryer<ArrowReader> adbcRetryer;
@@ -275,39 +275,50 @@ public class SpiceClient implements AutoCloseable {
                 .maxInboundMetadataSize(Integer.MAX_VALUE);
         ManagedChannel channel = channelBuilder.build();
 
-        if (Strings.isNullOrEmpty(apiKey)) {
-            FlightClient client = FlightGrpcUtils.createFlightClient(allocator, channel);
+        try {
+            if (Strings.isNullOrEmpty(apiKey)) {
+                FlightClient client = FlightGrpcUtils.createFlightClient(allocator, channel);
+                this.flightClient = new FlightSqlClient(client);
+                logger.debug("Flight client built (unauthenticated) - target={}", target);
+                return;
+            }
+
+            // prepare additional headers to insert into Flight requests
+            Map<String, String> headers = new HashMap<>();
+            String uaString;
+            if (Strings.isNullOrEmpty(userAgent)) {
+                uaString = Config.getUserAgent();
+            } else {
+                // Prepend the user-supplied user agent string with the Spice.ai user agent
+                uaString = userAgent + " " + Config.getUserAgent();
+            }
+            headers.put("User-Agent", uaString);
+
+            final ClientIncomingAuthHeaderMiddleware.Factory authFactory = new ClientIncomingAuthHeaderMiddleware.Factory(
+                    new ClientBearerHeaderHandler());
+
+            // Combine auth and custom header middleware into a single factory
+            final HeaderAuthMiddlewareFactory combinedFactory = new HeaderAuthMiddlewareFactory(authFactory, headers);
+
+            List<FlightClientMiddleware.Factory> middleware = new ArrayList<>();
+            middleware.add(combinedFactory);
+
+            final FlightClient client = FlightGrpcUtils.createFlightClient(allocator, channel, middleware);
+            client.handshake(new CredentialCallOption(new BasicAuthCredentialWriter(this.appId, this.apiKey)));
+            this.authCallOptions = authFactory.getCredentialCallOption();
             this.flightClient = new FlightSqlClient(client);
-            logger.debug("Flight client built (unauthenticated) - target={}", target);
-            return;
+
+            logger.debug("Flight client built (authenticated) - target={}, appId={}", target, this.appId);
+        } catch (Exception e) {
+            // Ensure the channel is shut down if client creation or handshake fails
+            // to avoid leaking threads and file descriptors on repeated rebuild attempts.
+            try {
+                channel.shutdownNow();
+            } catch (Exception suppressed) {
+                e.addSuppressed(suppressed);
+            }
+            throw e;
         }
-
-        // prepare additional headers to insert into Flight requests
-        Map<String, String> headers = new HashMap<>();
-        String uaString;
-        if (Strings.isNullOrEmpty(userAgent)) {
-            uaString = Config.getUserAgent();
-        } else {
-            // Prepend the user-supplied user agent string with the Spice.ai user agent
-            uaString = userAgent + " " + Config.getUserAgent();
-        }
-        headers.put("User-Agent", uaString);
-
-        final ClientIncomingAuthHeaderMiddleware.Factory authFactory = new ClientIncomingAuthHeaderMiddleware.Factory(
-                new ClientBearerHeaderHandler());
-
-        // Combine auth and custom header middleware into a single factory
-        final HeaderAuthMiddlewareFactory combinedFactory = new HeaderAuthMiddlewareFactory(authFactory, headers);
-
-        List<FlightClientMiddleware.Factory> middleware = new ArrayList<>();
-        middleware.add(combinedFactory);
-
-        final FlightClient client = FlightGrpcUtils.createFlightClient(allocator, channel, middleware);
-        client.handshake(new CredentialCallOption(new BasicAuthCredentialWriter(this.appId, this.apiKey)));
-        this.authCallOptions = authFactory.getCredentialCallOption();
-        this.flightClient = new FlightSqlClient(client);
-
-        logger.debug("Flight client built (authenticated) - target={}, appId={}", target, this.appId);
     }
 
     /**
@@ -1013,7 +1024,7 @@ public class SpiceClient implements AutoCloseable {
     }
 
     @Override
-    public void close() throws Exception {
+    public synchronized void close() throws Exception {
         if (closed) {
             return;
         }
