@@ -49,7 +49,8 @@ import org.apache.arrow.adbc.core.AdbcStatusCode;
 import org.apache.arrow.adbc.driver.flightsql.FlightSqlDriver;
 import org.apache.arrow.flight.CallStatus;
 import org.apache.arrow.flight.FlightClient;
-import org.apache.arrow.flight.FlightClient.Builder;
+import org.apache.arrow.flight.FlightClientMiddleware;
+import org.apache.arrow.flight.FlightGrpcUtils;
 import org.apache.arrow.flight.FlightStream;
 import org.apache.arrow.flight.Location;
 import org.apache.arrow.flight.Ticket;
@@ -59,6 +60,10 @@ import org.apache.arrow.flight.auth2.ClientIncomingAuthHeaderMiddleware;
 import org.apache.arrow.flight.grpc.CredentialCallOption;
 import org.apache.arrow.flight.FlightInfo;
 import org.apache.arrow.flight.FlightRuntimeException;
+
+import io.grpc.ManagedChannel;
+import io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.NettyChannelBuilder;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -209,12 +214,47 @@ public class SpiceClient implements AutoCloseable {
                 ? Long.MAX_VALUE
                 : memoryLimitMB * BYTES_PER_MB;
         this.allocator = new RootAllocator(memoryLimitBytes);
-        Builder builder = FlightClient.builder(allocator, new Location(this.flightAddress));
+
+        // Build a gRPC channel using forTarget() with the "dns:///" scheme so that
+        // gRPC's DnsNameResolver periodically re-resolves the hostname. This is critical
+        // for long-lived clients connecting to load-balanced endpoints (e.g. AWS ALBs)
+        // where backend IPs can change. Arrow Flight's default FlightClient.Builder uses
+        // NettyChannelBuilder.forAddress(SocketAddress), which resolves DNS exactly once
+        // at construction time and never re-resolves, causing clients to get stuck on
+        // stale IPs.
+        boolean useTls = this.flightAddress.getScheme().equals("grpc+tls");
+        String host = this.flightAddress.getHost();
+        int port = this.flightAddress.getPort();
+        if (port == -1) {
+            port = useTls ? 443 : 80;
+        }
+        // Wrap IPv6 literals in brackets for a valid dns:/// target
+        if (host != null && host.indexOf(':') >= 0 && !host.startsWith("[")) {
+            host = "[" + host + "]";
+        }
+        String target = "dns:///" + host + ":" + port;
+
+        NettyChannelBuilder channelBuilder = NettyChannelBuilder.forTarget(target);
+        if (useTls) {
+            try {
+                channelBuilder.useTransportSecurity()
+                        .sslContext(GrpcSslContexts.forClient().build());
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to configure TLS for Flight client", e);
+            }
+        } else {
+            channelBuilder.usePlaintext();
+        }
+        channelBuilder
+                .maxInboundMessageSize(Integer.MAX_VALUE)
+                .maxInboundMetadataSize(Integer.MAX_VALUE);
+        ManagedChannel channel = channelBuilder.build();
 
         if (Strings.isNullOrEmpty(apiKey)) {
-            this.flightClient = new FlightSqlClient(builder.build());
+            FlightClient client = FlightGrpcUtils.createFlightClient(allocator, channel);
+            this.flightClient = new FlightSqlClient(client);
             initRetryers();
-            logger.debug("SpiceClient initialized (unauthenticated) - flightAddress={}", this.flightAddress);
+            logger.debug("SpiceClient initialized (unauthenticated) - flightAddress={}, target={}", this.flightAddress, target);
             return;
         }
 
@@ -232,11 +272,13 @@ public class SpiceClient implements AutoCloseable {
         final ClientIncomingAuthHeaderMiddleware.Factory authFactory = new ClientIncomingAuthHeaderMiddleware.Factory(
                 new ClientBearerHeaderHandler());
 
-        // builder can't chain .intercept()s, so we need to chain the middleware
-        // factories instead
+        // Combine auth and custom header middleware into a single factory
         final HeaderAuthMiddlewareFactory combinedFactory = new HeaderAuthMiddlewareFactory(authFactory, headers);
 
-        final FlightClient client = builder.intercept(combinedFactory).build();
+        List<FlightClientMiddleware.Factory> middleware = new ArrayList<>();
+        middleware.add(combinedFactory);
+
+        final FlightClient client = FlightGrpcUtils.createFlightClient(allocator, channel, middleware);
         client.handshake(new CredentialCallOption(new BasicAuthCredentialWriter(this.appId, this.apiKey)));
         this.authCallOptions = authFactory.getCredentialCallOption();
         this.flightClient = new FlightSqlClient(client);
@@ -244,7 +286,7 @@ public class SpiceClient implements AutoCloseable {
         // Initialize cached retryers (immutable, built once)
         initRetryers();
         
-        logger.debug("SpiceClient initialized (authenticated) - flightAddress={}, appId={}", this.flightAddress, this.appId);
+        logger.debug("SpiceClient initialized (authenticated) - flightAddress={}, appId={}, target={}", this.flightAddress, this.appId, target);
     }
     
     /**
