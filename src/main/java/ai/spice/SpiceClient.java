@@ -398,11 +398,16 @@ public class SpiceClient implements AutoCloseable {
         this.adbcRetryer = RetryerBuilder.<ArrowReader>newBuilder()
                 .retryIfException(throwable -> {
                     if (throwable instanceof AdbcException) {
-                        String message = throwable.getMessage();
-                        return message != null && (message.contains("UNAVAILABLE") ||
-                                message.contains("UNKNOWN") ||
-                                message.contains("DEADLINE_EXCEEDED") ||
-                                message.contains("INTERNAL"));
+                        AdbcStatusCode status = ((AdbcException) throwable).getStatus();
+                        switch (status) {
+                            case IO:       // maps to gRPC UNAVAILABLE
+                            case UNKNOWN:
+                            case TIMEOUT:  // maps to gRPC DEADLINE_EXCEEDED
+                            case INTERNAL:
+                                return true;
+                            default:
+                                return false;
+                        }
                     }
                     return false;
                 })
@@ -623,6 +628,16 @@ public class SpiceClient implements AutoCloseable {
             // Now we can safely close the parameter root since it has been sent to server
             if (paramRoot != null) {
                 paramRoot.close();
+                paramRoot = null;
+            }
+
+            // Close the statement eagerly — the reader holds its own Flight stream
+            // and no longer needs the statement. This frees server-side resources
+            // immediately rather than waiting for slow consumers to close the reader.
+            try {
+                stmt.close();
+            } catch (Exception closeEx) {
+                logger.warn("Error closing ADBC statement: {}", closeEx.getMessage());
             }
             
             return reader;
@@ -642,8 +657,6 @@ public class SpiceClient implements AutoCloseable {
             }
             throw e;
         }
-        // Note: We don't close the statement here because the reader needs it
-        // The statement will be closed when the reader is closed
     }
 
     /**
@@ -651,34 +664,21 @@ public class SpiceClient implements AutoCloseable {
      * The caller is responsible for closing the returned root.
      */
     private VectorSchemaRoot createParameterRoot(Object... params) throws AdbcException {
-        // Extract values and determine types
         final int numParams = params.length;
-        Object[] values = new Object[numParams];
-        ArrowType[] types = new ArrowType[numParams];
 
-        for (int i = 0; i < numParams; i++) {
-            Object param = params[i];
-
-            if (param instanceof Param) {
-                Param p = (Param) param;
-                values[i] = p.getValue();
-                if (p.hasExplicitType()) {
-                    types[i] = p.getType();
-                } else {
-                    types[i] = inferArrowType(p.getValue());
-                }
-            } else {
-                values[i] = param;
-                types[i] = inferArrowType(param);
-            }
-        }
-
-        // Build the schema for parameters with pre-sized list
+        // Single pass: build schema fields directly (no intermediate arrays)
         List<Field> fields = new ArrayList<>(numParams);
         for (int i = 0; i < numParams; i++) {
-            // Use cached field names for common cases (up to 64 params)
+            Object param = params[i];
+            ArrowType type;
+            if (param instanceof Param) {
+                Param p = (Param) param;
+                type = p.hasExplicitType() ? p.getType() : inferArrowType(p.getValue());
+            } else {
+                type = inferArrowType(param);
+            }
             String fieldName = (i < PARAM_NAMES.length) ? PARAM_NAMES[i] : "$" + (i + 1);
-            fields.add(new Field(fieldName, FieldType.nullable(types[i]), null));
+            fields.add(new Field(fieldName, FieldType.nullable(type), null));
         }
         Schema schema = new Schema(fields);
 
@@ -686,10 +686,12 @@ public class SpiceClient implements AutoCloseable {
         VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator);
         root.allocateNew();
 
-        // Append values to the vectors and set value count for each
+        // Populate vectors — read value from original params to avoid intermediate arrays
         for (int i = 0; i < numParams; i++) {
+            Object param = params[i];
+            Object value = (param instanceof Param) ? ((Param) param).getValue() : param;
             FieldVector vector = root.getVector(i);
-            appendValueToVector(vector, 0, values[i], types[i]);
+            appendValueToVector(vector, 0, value, vector.getField().getType());
             vector.setValueCount(1);
         }
 
