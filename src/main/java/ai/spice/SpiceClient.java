@@ -134,7 +134,9 @@ public class SpiceClient implements AutoCloseable {
     private static final Gson GSON = new Gson();
     
     // Cached HttpClient for refresh operations (thread-safe, connection pooling)
-    private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
     
     // Pre-computed parameter field names to avoid string concatenation in hot path
     private static final String[] PARAM_NAMES = new String[64];
@@ -160,6 +162,7 @@ public class SpiceClient implements AutoCloseable {
     private Retryer<FlightStream> flightRetryer;
 
     // ADBC resources for parameterized queries
+    private volatile boolean adbcInitialized = false;
     private AdbcDatabase adbcDatabase;
     private AdbcConnection adbcConnection;
 
@@ -504,12 +507,16 @@ public class SpiceClient implements AutoCloseable {
 
     /**
      * Initializes the ADBC connection if not already initialized.
-     * This is called lazily on the first parameterized query.
+     * Uses double-checked locking to avoid monitor contention on the hot path.
      */
-    private synchronized void initADBCIfNeeded() throws AdbcException {
-        if (adbcDatabase != null && adbcConnection != null) {
+    private void initADBCIfNeeded() throws AdbcException {
+        if (adbcInitialized) {
             return;
         }
+        synchronized (this) {
+            if (adbcInitialized) {
+                return;
+            }
 
         logger.debug("Initializing ADBC connection");
         
@@ -545,14 +552,17 @@ public class SpiceClient implements AutoCloseable {
         FlightSqlDriver driver = new FlightSqlDriver(allocator);
         adbcDatabase = driver.open(options);
         adbcConnection = adbcDatabase.connect();
+        adbcInitialized = true;
         
         logger.debug("ADBC connection established - uri={}", uri);
+        }
     }
 
     /**
      * Closes the ADBC resources.
      */
     private void closeADBC() {
+        adbcInitialized = false;
         if (adbcConnection != null) {
             try {
                 adbcConnection.close();
