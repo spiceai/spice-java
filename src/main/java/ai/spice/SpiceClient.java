@@ -39,6 +39,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.arrow.adbc.core.AdbcConnection;
 import org.apache.arrow.adbc.core.AdbcDatabase;
@@ -215,6 +216,26 @@ public class SpiceClient implements AutoCloseable {
                 : memoryLimitMB * BYTES_PER_MB;
         this.allocator = new RootAllocator(memoryLimitBytes);
 
+        // Build the Flight client (channel + auth handshake)
+        buildFlightClient();
+
+        // Initialize cached retryers (immutable, built once)
+        initRetryers();
+
+        logger.debug("SpiceClient initialized - flightAddress={}, appId={}", this.flightAddress, this.appId);
+    }
+    
+    /**
+     * Builds or rebuilds the Flight client, including the gRPC channel and auth handshake.
+     * This method is called during construction and after {@link #reset()}.
+     *
+     * <p>The gRPC channel is configured with:</p>
+     * <ul>
+     *   <li>{@code dns:///} target scheme for periodic DNS re-resolution behind load balancers</li>
+     *   <li>HTTP/2 keep-alive (30s interval, 10s timeout) to detect dead connections quickly</li>
+     * </ul>
+     */
+    private synchronized void buildFlightClient() {
         // Build a gRPC channel using forTarget() with the "dns:///" scheme so that
         // gRPC's DnsNameResolver periodically re-resolves the hostname. This is critical
         // for long-lived clients connecting to load-balanced endpoints (e.g. AWS ALBs)
@@ -246,6 +267,10 @@ public class SpiceClient implements AutoCloseable {
             channelBuilder.usePlaintext();
         }
         channelBuilder
+                // HTTP/2 keep-alive to detect dead/idle connections behind load balancers
+                .keepAliveTime(30, TimeUnit.SECONDS)
+                .keepAliveTimeout(10, TimeUnit.SECONDS)
+                .keepAliveWithoutCalls(true)
                 .maxInboundMessageSize(Integer.MAX_VALUE)
                 .maxInboundMetadataSize(Integer.MAX_VALUE);
         ManagedChannel channel = channelBuilder.build();
@@ -253,8 +278,7 @@ public class SpiceClient implements AutoCloseable {
         if (Strings.isNullOrEmpty(apiKey)) {
             FlightClient client = FlightGrpcUtils.createFlightClient(allocator, channel);
             this.flightClient = new FlightSqlClient(client);
-            initRetryers();
-            logger.debug("SpiceClient initialized (unauthenticated) - flightAddress={}, target={}", this.flightAddress, target);
+            logger.debug("Flight client built (unauthenticated) - target={}", target);
             return;
         }
 
@@ -282,13 +306,69 @@ public class SpiceClient implements AutoCloseable {
         client.handshake(new CredentialCallOption(new BasicAuthCredentialWriter(this.appId, this.apiKey)));
         this.authCallOptions = authFactory.getCredentialCallOption();
         this.flightClient = new FlightSqlClient(client);
-        
-        // Initialize cached retryers (immutable, built once)
-        initRetryers();
-        
-        logger.debug("SpiceClient initialized (authenticated) - flightAddress={}, appId={}, target={}", this.flightAddress, this.appId, target);
+
+        logger.debug("Flight client built (authenticated) - target={}, appId={}", target, this.appId);
     }
-    
+
+    /**
+     * Ensures the Flight client is connected, rebuilding it if necessary
+     * (e.g. after a {@link #reset()} call).
+     */
+    private synchronized void ensureFlightClient() {
+        if (this.flightClient == null) {
+            buildFlightClient();
+        }
+    }
+
+    /**
+     * Resets the underlying gRPC transport by closing the current Flight client and ADBC connections,
+     * then immediately establishes a fresh connection with a new DNS lookup and TLS handshake.
+     * This ensures the next {@link #query(String)} or {@link #queryWithParams(String, Object...)}
+     * call does not incur connection setup overhead.
+     *
+     * <p>Use this method to recover from unrecoverable transport failures such as:</p>
+     * <ul>
+     *   <li>SSLHandshakeException with mismatched certificates (e.g. load-balancer routing to wrong backend)</li>
+     *   <li>Persistent UNAVAILABLE errors after exhausting retries</li>
+     *   <li>Stale connections pinned to decommissioned backend IPs</li>
+     * </ul>
+     *
+     * <p>Example usage for long-lived clients:</p>
+     * <pre>{@code
+     * try {
+     *     return client.query(sql);
+     * } catch (ExecutionException e) {
+     *     if (isTransportFailure(e.getCause())) {
+     *         client.reset();
+     *         return client.query(sql); // retry with fresh connection
+     *     }
+     *     throw e;
+     * }
+     * }</pre>
+     */
+    public synchronized void reset() {
+        logger.info("Resetting SpiceClient transport");
+
+        // Close ADBC resources (they maintain a separate Flight connection)
+        closeADBC();
+
+        // Close Flight client (this also shuts down the underlying gRPC channel)
+        if (this.flightClient != null) {
+            try {
+                this.flightClient.close();
+            } catch (Exception e) {
+                logger.warn("Error closing Flight client during reset: {}", e.getMessage());
+            }
+            this.flightClient = null;
+        }
+        this.authCallOptions = null;
+
+        // Eagerly re-establish the connection so the next query has no setup overhead
+        buildFlightClient();
+
+        logger.info("SpiceClient transport reset and reconnected.");
+    }
+
     /**
      * Initializes the cached retryer instances.
      * Called from constructor and must be called after maxRetries is set.
@@ -907,6 +987,7 @@ public class SpiceClient implements AutoCloseable {
     }
 
     private FlightStream queryInternal(String sql) {
+        ensureFlightClient();
         FlightInfo flightInfo = this.flightClient.execute(sql, authCallOptions);
         Ticket ticket = flightInfo.getEndpoints().get(0).getTicket();
         return this.flightClient.getStream(ticket, authCallOptions);
@@ -942,12 +1023,14 @@ public class SpiceClient implements AutoCloseable {
         }
 
         // Close Flight client
-        try {
-            this.flightClient.close();
-            logger.debug("Flight client closed");
-        } catch (Exception e) {
-            logger.warn("Error closing Flight client: {}", e.getMessage());
-            exceptions.add(e);
+        if (this.flightClient != null) {
+            try {
+                this.flightClient.close();
+                logger.debug("Flight client closed");
+            } catch (Exception e) {
+                logger.warn("Error closing Flight client: {}", e.getMessage());
+                exceptions.add(e);
+            }
         }
 
         // Close allocator
