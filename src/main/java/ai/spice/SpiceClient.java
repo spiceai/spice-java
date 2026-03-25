@@ -1000,11 +1000,19 @@ public class SpiceClient implements AutoCloseable {
         }
     }
 
-    private synchronized FlightStream queryInternal(String sql) {
-        ensureFlightClient();
-        FlightInfo flightInfo = this.flightClient.execute(sql, authCallOptions);
+    private FlightStream queryInternal(String sql) {
+        // Snapshot the client and auth under the lock, then release it
+        // so concurrent queries can execute RPCs in parallel.
+        final FlightSqlClient client;
+        final CredentialCallOption auth;
+        synchronized (this) {
+            ensureFlightClient();
+            client = this.flightClient;
+            auth = this.authCallOptions;
+        }
+        FlightInfo flightInfo = client.execute(sql, auth);
         Ticket ticket = flightInfo.getEndpoints().get(0).getTicket();
-        return this.flightClient.getStream(ticket, authCallOptions);
+        return client.getStream(ticket, auth);
     }
 
     private FlightStream queryInternalWithRetry(String sql) throws ExecutionException, RetryException {
