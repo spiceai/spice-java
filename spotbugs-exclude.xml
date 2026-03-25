@@ -8,6 +8,7 @@
     <!-- Example code: dead stores are intentional (demonstrating all param types) -->
     <Match>
         <Package name="ai.spice.example"/>
+        <Bug pattern="DLS_DEAD_LOCAL_STORE"/>
     </Match>
 
     <!-- Config: dead store in getUserAgent() -->
@@ -30,6 +31,11 @@
 
     <!-- Constructor-throw warnings: these constructors intentionally validate/fail early -->
     <Match>
+        <Class name="ai.spice.SpiceClient"/>
+        <Bug pattern="CT_CONSTRUCTOR_THROW"/>
+    </Match>
+    <Match>
+        <Class name="ai.spice.SpiceClientBuilder"/>
         <Bug pattern="CT_CONSTRUCTOR_THROW"/>
     </Match>
 </FindBugsFilter>

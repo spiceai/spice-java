@@ -1,0 +1,22 @@
+fix: Address PR review comments (round 3)
+
+- Add closed guard to ensureFlightClient() to prevent rebuilding
+  transport after client is closed.
+
+- Use local temporaries in initADBCIfNeeded() to avoid leaking
+  partially created AdbcDatabase/AdbcConnection on failure.
+
+- Wrap FlightStream and ArrowReader in try-with-resources in
+  ResetTest to prevent resource leaks during integration runs.
+
+- Add bounded 30s timeout to CountDownLatch.await() in concurrent
+  tests to prevent indefinite hangs on regression.
+
+- Scope SpotBugs exclusions: limit example package exclusion to
+  DLS_DEAD_LOCAL_STORE, scope CT_CONSTRUCTOR_THROW to specific
+  classes (SpiceClient, SpiceClientBuilder).
+
+- Fix README example to use try-with-resources for FlightStream.
+
+- Add OWASP Dependency-Check data caching and NVD API key support
+  in CI to improve reliability and speed.

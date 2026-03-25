@@ -215,7 +215,17 @@ jobs:
       - name: Checkstyle
         run: mvn checkstyle:check -B
 
+      - name: Cache OWASP Dependency-Check data
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: dependency-check-data-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            dependency-check-data-${{ runner.os }}-
+
       - name: OWASP Dependency-Check
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: mvn dependency-check:check -B
 
       - name: Upload dependency-check report

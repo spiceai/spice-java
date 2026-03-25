@@ -333,6 +333,9 @@ public class SpiceClient implements AutoCloseable {
      * (e.g. after a {@link #reset()} call).
      */
     private synchronized void ensureFlightClient() {
+        if (this.closed) {
+            throw new IllegalStateException("SpiceClient is closed");
+        }
         if (this.flightClient == null) {
             buildFlightClient();
         }
@@ -557,10 +560,20 @@ public class SpiceClient implements AutoCloseable {
         }
         options.put("adbc.flight.sql.rpc.call_header.user-agent", uaString);
 
-        // Create the driver and database
+        // Create the driver and database using local temporaries.
+        // Only assign to fields after both open+connect succeed to avoid
+        // leaking partially created resources on failure.
         FlightSqlDriver driver = new FlightSqlDriver(allocator);
-        adbcDatabase = driver.open(options);
-        adbcConnection = adbcDatabase.connect();
+        AdbcDatabase db = driver.open(options);
+        AdbcConnection conn;
+        try {
+            conn = db.connect();
+        } catch (AdbcException e) {
+            try { db.close(); } catch (Exception suppressed) { e.addSuppressed(suppressed); }
+            throw e;
+        }
+        adbcDatabase = db;
+        adbcConnection = conn;
         adbcInitialized = true;
         
         logger.debug("ADBC connection established - uri={}", uri);

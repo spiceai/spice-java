@@ -227,12 +227,15 @@ SpiceClient client = SpiceClient.builder()
 
 // Long-lived usage with transport recovery
 try {
-    FlightStream stream = client.query(sql);
-    // process results...
+    try (FlightStream stream = client.query(sql)) {
+        // process results...
+    }
 } catch (ExecutionException e) {
     if (isTransportFailure(e.getCause())) {
         client.reset();                     // discard bad transport, reconnect immediately
-        FlightStream stream = client.query(sql);  // no connection overhead
+        try (FlightStream stream = client.query(sql)) {
+            // process results with fresh connection...
+        }
     } else {
         throw e;
     }

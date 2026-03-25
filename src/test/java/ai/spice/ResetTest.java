@@ -92,10 +92,10 @@ public class ResetTest extends TestCase {
         client.reset();
 
         try {
-            FlightStream stream = client.query("SELECT 1");
-            // If a local Spice runtime is running, this succeeds
-            stream.next();
-            stream.close();
+            try (FlightStream stream = client.query("SELECT 1")) {
+                // If a local Spice runtime is running, this succeeds
+                stream.next();
+            }
         } catch (Exception e) {
             // Connection errors are expected when no server is running.
             // A NullPointerException here would indicate the rebuild failed.
@@ -120,11 +120,11 @@ public class ResetTest extends TestCase {
         client.reset();
 
         try {
-            ArrowReader reader = client.queryWithParams("SELECT $1", 42);
-            while (reader.loadNextBatch()) {
-                // consume
+            try (ArrowReader reader = client.queryWithParams("SELECT $1", 42)) {
+                while (reader.loadNextBatch()) {
+                    // consume
+                }
             }
-            reader.close();
         } catch (Exception e) {
             assertFalse("Should not get NullPointerException after reset (rebuild failed)",
                     e instanceof NullPointerException);
@@ -221,7 +221,8 @@ public class ResetTest extends TestCase {
         }
 
         startLatch.countDown(); // release all threads
-        doneLatch.await();
+        assertTrue("Concurrent reset should complete within 30s",
+                doneLatch.await(30, java.util.concurrent.TimeUnit.SECONDS));
 
         assertEquals("No threads should have encountered errors", 0, errors.get());
         client.close();
@@ -274,7 +275,8 @@ public class ResetTest extends TestCase {
         }).start();
 
         startLatch.countDown();
-        doneLatch.await();
+        assertTrue("Concurrent reset+query should complete within 30s",
+                doneLatch.await(30, java.util.concurrent.TimeUnit.SECONDS));
 
         assertTrue("Should not get NullPointerException during concurrent reset+query: " + unexpectedErrors,
                 unexpectedErrors.isEmpty());
@@ -391,25 +393,27 @@ public class ResetTest extends TestCase {
     public void testResetThenQueryIntegration() throws Exception {
         try (SpiceClient client = SpiceClient.builder().build()) {
             // First query (establishes connection)
-            FlightStream stream1 = client.query(
-                    "SELECT c_custkey FROM tpch.customer LIMIT 1");
-            int rows1 = 0;
-            while (stream1.next()) {
-                rows1 += stream1.getRoot().getRowCount();
+            try (FlightStream stream1 = client.query(
+                    "SELECT c_custkey FROM tpch.customer LIMIT 1")) {
+                int rows1 = 0;
+                while (stream1.next()) {
+                    rows1 += stream1.getRoot().getRowCount();
+                }
+                assertEquals("First query should return 1 row", 1, rows1);
             }
-            assertEquals("First query should return 1 row", 1, rows1);
 
             // Reset (discards transport)
             client.reset();
 
             // Second query (lazy rebuild)
-            FlightStream stream2 = client.query(
-                    "SELECT c_custkey FROM tpch.customer LIMIT 2");
-            int rows2 = 0;
-            while (stream2.next()) {
-                rows2 += stream2.getRoot().getRowCount();
+            try (FlightStream stream2 = client.query(
+                    "SELECT c_custkey FROM tpch.customer LIMIT 2")) {
+                int rows2 = 0;
+                while (stream2.next()) {
+                    rows2 += stream2.getRoot().getRowCount();
+                }
+                assertEquals("Second query after reset should return 2 rows", 2, rows2);
             }
-            assertEquals("Second query after reset should return 2 rows", 2, rows2);
         } catch (Exception e) {
             // Skip if no local runtime or TPC-H data available
             String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
