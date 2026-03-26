@@ -332,6 +332,11 @@ public class SpiceClientBuilderTest extends TestCase {
 
     // ==================== Query Timeout Tests ====================
 
+    // Note: these tests use reflection to verify that the builder correctly wires
+    // queryTimeoutSeconds into SpiceClient. A live server is not available in unit
+    // tests, so behavioural verification (observing a DEADLINE_EXCEEDED) is not
+    // feasible here. See FlightQueryTest for integration-level timeout coverage.
+
     public void testWithQueryTimeoutSecondsValid() throws Exception {
         SpiceClient client = SpiceClient.builder()
                 .withQueryTimeoutSeconds(300)

@@ -25,7 +25,6 @@ package ai.spice;
 import java.net.URI;
 import java.util.concurrent.ExecutionException;
 
-import org.apache.arrow.flight.FlightRuntimeException;
 import org.apache.arrow.flight.FlightStream;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
@@ -133,6 +132,8 @@ public class FlightQueryTest
         }
     }
 
+    // ==================== Local Integration Tests (catalog_sales) ====================
+
     // ==================== Query Timeout Integration Tests ====================
 
     public void testQueryTimesOutWithVeryShortTimeout() throws Exception {
@@ -141,7 +142,8 @@ public class FlightQueryTest
             return;
         }
 
-        // 1ms is too short for any network round-trip; gRPC deadline should fire immediately
+        // 1 second is likely too short to stream 1000 rows over the network; the gRPC
+        // deadline should fire before the stream is exhausted.
         SpiceClient client = SpiceClient.builder()
                 .withApiKey(apiKey)
                 .withHttpAddress(new URI("https://data.spiceai.io"))
@@ -149,15 +151,13 @@ public class FlightQueryTest
                 .withQueryTimeoutSeconds(1)
                 .build();
 
-        try {
-            // Any query to the cloud should exceed 1ms; we drain the stream to trigger the timeout
-            FlightStream res = client.query("SELECT tpep_pickup_datetime FROM taxi_trips LIMIT 1000");
+        try (FlightStream res = client.query("SELECT tpep_pickup_datetime FROM taxi_trips LIMIT 1000")) {
             while (res.next()) {
-                // consume batches — timeout should fire before stream is exhausted
+                // consume batches — deadline should fire before stream is exhausted
             }
-            // If we get here with a very large result set the test is still valid — it just
-            // means the query happened to complete inside 1s. That's fine; the important check
-            // is that the client *can* set a deadline without crashing.
+            // If the query completes within 1s the test is still valid — it just
+            // means the server responded quickly. The important check is that the
+            // client can set a deadline without crashing.
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
             boolean isTimeout = msg.contains("deadline") || msg.contains("timed out")

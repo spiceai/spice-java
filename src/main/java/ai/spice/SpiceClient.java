@@ -206,8 +206,25 @@ public class SpiceClient implements AutoCloseable {
         this(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB, 0);
     }
 
+    /**
+     * Constructs a new SpiceClient instance with the specified parameters, including
+     * a per-query timeout.
+     *
+     * @param appId               the application ID used to identify the client application
+     * @param apiKey              the API key used for authentication with Spice.ai services
+     * @param flightAddress       the URI of the flight address for connecting to Spice.ai services
+     * @param httpAddress         the URI of the Spice.ai runtime HTTP address
+     * @param maxRetries          the maximum number of connection retries for the client
+     * @param userAgent           the user agent string
+     * @param memoryLimitMB       the memory limit in megabytes for the Arrow RootAllocator
+     * @param queryTimeoutSeconds the maximum time in seconds a query may run before being
+     *                            cancelled; {@code 0} disables the timeout
+     */
     public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries,
             String userAgent, long memoryLimitMB, long queryTimeoutSeconds) {
+        if (queryTimeoutSeconds < 0) {
+            throw new IllegalArgumentException("queryTimeoutSeconds must be >= 0");
+        }
         this.queryTimeoutSeconds = queryTimeoutSeconds;
         this.appId = appId;
         this.apiKey = apiKey;
