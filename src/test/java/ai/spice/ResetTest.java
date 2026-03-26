@@ -26,11 +26,13 @@ import java.net.URI;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.arrow.flight.FlightRuntimeException;
 import org.apache.arrow.flight.FlightStream;
 import org.apache.arrow.vector.ipc.ArrowReader;
 
@@ -294,10 +296,13 @@ public class ResetTest extends TestCase {
                         try {
                             FlightStream stream = client.query("SELECT 1");
                             stream.close();
-                        } catch (NullPointerException e) {
-                            unexpectedErrors.add(e);
                         } catch (Exception e) {
-                            // Connection errors are expected
+                            // Unwrap ExecutionException to inspect the real cause
+                            Throwable toCheck = (e instanceof ExecutionException && e.getCause() != null)
+                                    ? e.getCause() : e;
+                            if (!isExpectedTransportError(toCheck)) {
+                                unexpectedErrors.add(toCheck);
+                            }
                         }
                         Thread.sleep(10);
                     }
@@ -310,12 +315,37 @@ public class ResetTest extends TestCase {
             assertTrue("Concurrent reset+query should complete within 30s",
                     executor.awaitTermination(30, TimeUnit.SECONDS));
 
-            assertTrue("Should not get NullPointerException during concurrent reset+query: " + unexpectedErrors,
-                    unexpectedErrors.isEmpty());
+            assertTrue("Unexpected errors during concurrent reset+query: "
+                    + unexpectedErrors, unexpectedErrors.isEmpty());
         } finally {
             executor.shutdownNow();
             client.close();
         }
+    }
+
+    /**
+     * Returns true if the throwable is an expected transport/connection error
+     * that can occur when no server is running or during a mid-reset race.
+     * Anything else (NPE, IllegalStateException, etc.) is unexpected.
+     */
+    private static boolean isExpectedTransportError(Throwable t) {
+        if (t instanceof FlightRuntimeException) {
+            return true; // gRPC status errors (UNAVAILABLE, etc.)
+        }
+        if (t instanceof java.net.ConnectException
+                || t instanceof java.io.IOException) {
+            return true; // connection refused, broken pipe, etc.
+        }
+        String msg = t.getMessage();
+        if (msg != null) {
+            String lower = msg.toLowerCase();
+            if (lower.contains("unavailable")
+                    || lower.contains("connection refused")
+                    || lower.contains("failed to execute")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ==================== Construction / DNS / Keep-alive ====================
