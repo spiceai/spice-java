@@ -23,8 +23,8 @@ SOFTWARE.
 package ai.spice;
 
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,18 +42,31 @@ import junit.framework.TestCase;
  */
 public class ResetTest extends TestCase {
 
-    private boolean serverAvailable = false;
+    private static volatile boolean serverAvailable = false;
+    private static volatile boolean serverAvailabilityChecked = false;
 
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-        try (SpiceClient probe = SpiceClient.builder().build()) {
-            try (FlightStream stream = probe.query("SELECT 1")) {
-                stream.next();
+        if (!serverAvailabilityChecked) {
+            synchronized (ResetTest.class) {
+                if (!serverAvailabilityChecked) {
+                    try (SpiceClient probe = SpiceClient.builder().build()) {
+                        // Probe with taxi_trips (not SELECT 1) to ensure
+                        // the dataset is loaded and ready, not just that
+                        // the server is up.
+                        try (FlightStream stream = probe.query(
+                                "SELECT total_amount FROM taxi_trips LIMIT 1")) {
+                            stream.next();
+                        }
+                        serverAvailable = true;
+                    } catch (Exception e) {
+                        serverAvailable = false;
+                    } finally {
+                        serverAvailabilityChecked = true;
+                    }
+                }
             }
-            serverAvailable = true;
-        } catch (Exception e) {
-            serverAvailable = false;
         }
     }
 
@@ -257,7 +270,7 @@ public class ResetTest extends TestCase {
         final SpiceClient client = SpiceClient.builder().build();
         final int iterations = 5;
         final CountDownLatch startLatch = new CountDownLatch(1);
-        final List<Throwable> unexpectedErrors = new ArrayList<>();
+        final List<Throwable> unexpectedErrors = new CopyOnWriteArrayList<>();
         ExecutorService executor = Executors.newFixedThreadPool(2);
 
         try {

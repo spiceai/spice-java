@@ -509,6 +509,9 @@ public class SpiceClient implements AutoCloseable {
         if (Strings.isNullOrEmpty(sql)) {
             throw new IllegalArgumentException("No SQL query provided");
         }
+        if (closed) {
+            throw new IllegalStateException("Cannot query with a closed SpiceClient");
+        }
 
         logger.debug("Executing parameterized query with {} parameters: {}", params != null ? params.length : 0, sql);
         try {
