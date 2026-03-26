@@ -47,6 +47,8 @@ import org.apache.arrow.adbc.core.AdbcException;
 import org.apache.arrow.adbc.core.AdbcStatement;
 import org.apache.arrow.adbc.core.AdbcStatusCode;
 import org.apache.arrow.adbc.driver.flightsql.FlightSqlDriver;
+import org.apache.arrow.flight.CallOption;
+import org.apache.arrow.flight.CallOptions;
 import org.apache.arrow.flight.CallStatus;
 import org.apache.arrow.flight.FlightClient;
 import org.apache.arrow.flight.FlightClientMiddleware;
@@ -156,6 +158,7 @@ public class SpiceClient implements AutoCloseable {
     private URI flightAddress;
     private URI httpAddress;
     private int maxRetries;
+    private long queryTimeoutSeconds;
     private FlightSqlClient flightClient;
     private CredentialCallOption authCallOptions = null;
     private BufferAllocator allocator;
@@ -200,6 +203,12 @@ public class SpiceClient implements AutoCloseable {
      */
     public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries,
             String userAgent, long memoryLimitMB) {
+        this(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB, 0);
+    }
+
+    public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries,
+            String userAgent, long memoryLimitMB, long queryTimeoutSeconds) {
+        this.queryTimeoutSeconds = queryTimeoutSeconds;
         this.appId = appId;
         this.apiKey = apiKey;
         this.maxRetries = maxRetries;
@@ -1050,6 +1059,12 @@ public class SpiceClient implements AutoCloseable {
             ensureFlightClient();
             client = this.flightClient;
             auth = this.authCallOptions;
+        }
+        if (queryTimeoutSeconds > 0) {
+            CallOption timeout = CallOptions.timeout(queryTimeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
+            FlightInfo flightInfo = client.execute(sql, auth, timeout);
+            Ticket ticket = flightInfo.getEndpoints().get(0).getTicket();
+            return client.getStream(ticket, auth, timeout);
         }
         FlightInfo flightInfo = client.execute(sql, auth);
         Ticket ticket = flightInfo.getEndpoints().get(0).getTicket();

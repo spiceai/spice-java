@@ -39,6 +39,7 @@ public class SpiceClientBuilder {
     private URI httpAddress;
     private int maxRetries = 3;
     private long memoryLimitMB = Long.MAX_VALUE; // Default is all available memory.
+    private long queryTimeoutSeconds = 0; // 0 means no timeout
 
     /**
      * Constructs a new SpiceClientBuilder instance
@@ -168,11 +169,27 @@ public class SpiceClientBuilder {
     }
 
     /**
+     * Sets the query timeout in seconds. Queries exceeding this duration will be cancelled.
+     * Default is 0 (no timeout).
+     *
+     * @param queryTimeoutSeconds timeout in seconds; 0 disables the timeout
+     * @return The current instance of SpiceClientBuilder for method chaining.
+     */
+    public SpiceClientBuilder withQueryTimeoutSeconds(long queryTimeoutSeconds) {
+        if (queryTimeoutSeconds < 0) {
+            throw new IllegalArgumentException("queryTimeoutSeconds must be >= 0");
+        }
+        this.queryTimeoutSeconds = queryTimeoutSeconds;
+        return this;
+    }
+
+    /**
      * Creates SpiceClient with provided parameters.
      *
      * @return The SpiceClient instance
      */
     public SpiceClient build() {
-        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB);
+        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB,
+                queryTimeoutSeconds);
     }
 }

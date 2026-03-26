@@ -329,4 +329,49 @@ public class SpiceClientBuilderTest extends TestCase {
         }
         // Auto-close should work
     }
+
+    // ==================== Query Timeout Tests ====================
+
+    public void testWithQueryTimeoutSecondsValid() throws Exception {
+        SpiceClient client = SpiceClient.builder()
+                .withQueryTimeoutSeconds(300)
+                .build();
+        assertNotNull("Client should be created with timeout", client);
+
+        java.lang.reflect.Field f = SpiceClient.class.getDeclaredField("queryTimeoutSeconds");
+        f.setAccessible(true);
+        assertEquals("queryTimeoutSeconds should be 300", 300L, f.get(client));
+        client.close();
+    }
+
+    public void testWithQueryTimeoutSecondsZeroDisablesTimeout() throws Exception {
+        SpiceClient client = SpiceClient.builder()
+                .withQueryTimeoutSeconds(0)
+                .build();
+        assertNotNull("Client should be created with timeout disabled", client);
+
+        java.lang.reflect.Field f = SpiceClient.class.getDeclaredField("queryTimeoutSeconds");
+        f.setAccessible(true);
+        assertEquals("queryTimeoutSeconds 0 means no timeout", 0L, f.get(client));
+        client.close();
+    }
+
+    public void testDefaultTimeoutIsZero() throws Exception {
+        SpiceClient client = SpiceClient.builder().build();
+        assertNotNull(client);
+
+        java.lang.reflect.Field f = SpiceClient.class.getDeclaredField("queryTimeoutSeconds");
+        f.setAccessible(true);
+        assertEquals("Default queryTimeoutSeconds should be 0 (no timeout)", 0L, f.get(client));
+        client.close();
+    }
+
+    public void testWithQueryTimeoutSecondsNegativeThrows() throws Exception {
+        try {
+            SpiceClient.builder().withQueryTimeoutSeconds(-1);
+            fail("Should throw for negative timeout");
+        } catch (IllegalArgumentException e) {
+            assertTrue("Error should mention >= 0", e.getMessage().contains(">= 0"));
+        }
+    }
 }
