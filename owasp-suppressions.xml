@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+    <!--
+        CVE-2026-25087: Affects Apache Arrow <= 19.0.0.
+        No upstream fix is available yet (19.0.0 is the latest release).
+        Suppress until Arrow ships a patched version, then remove this entry.
+    -->
+    <suppress>
+        <notes><![CDATA[
+            CVE-2026-25087 in Apache Arrow. No fix available as of Arrow 19.0.0.
+            Tracked for removal when Arrow publishes a patched release.
+        ]]></notes>
+        <cve>CVE-2026-25087</cve>
+    </suppress>
+</suppressions>

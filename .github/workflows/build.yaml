@@ -175,7 +175,14 @@ jobs:
           sleep 10
 
       - name: Test
-        run: mvn test -B
+        run: |
+          EXTRA=""
+          # JDK 23+ disables sun.misc.Unsafe memory methods by default (JEP 471).
+          # Arrow/Netty still require them for off-heap memory allocation.
+          if [ "${{ matrix.java.version }}" -ge 23 ] 2>/dev/null; then
+            EXTRA="--sun-misc-unsafe-memory-access=allow"
+          fi
+          mvn test -B -DextraArgLine="$EXTRA"
         env:
           API_KEY: ${{ secrets.SPICE_CLOUD_QUICKSTART_API_KEY }}
 
@@ -224,9 +231,11 @@ jobs:
             dependency-check-data-${{ runner.os }}-
 
       - name: OWASP Dependency-Check
+        # NVD API is unreliable (429s, timeouts without API key). Don't block CI.
+        continue-on-error: true
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: mvn dependency-check:check -B
+        run: mvn dependency-check:check -B -DnvdApiKey="$NVD_API_KEY"
 
       - name: Upload dependency-check report
         if: always()

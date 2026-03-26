@@ -31,6 +31,9 @@
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
+        <!-- Placeholder for JDK-version-specific JVM flags (e.g. sun.misc.Unsafe access).
+             Set via -DextraArgLine="..." on the Maven command line. -->
+        <extraArgLine></extraArgLine>
     </properties>
     <dependencies>
         <dependency>
@@ -89,8 +92,12 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.5</version>
                 <configuration>
-                    <!-- @{argLine} is set by JaCoCo's prepare-agent goal -->
-                    <argLine>@{argLine} --add-opens=java.base/java.nio=ALL-UNNAMED</argLine>
+                    <!-- @{argLine} is set by JaCoCo's prepare-agent goal.
+                         Arrow memory + Netty require reflective access to internal JDK APIs:
+                         java.nio: Arrow memory-core (DirectByteBuffer access)
+                         jdk.internal.misc: Netty PlatformDependent (Unsafe for off-heap buffers)
+                         ${extraArgLine} is set by CI for JDK 23+ (sun.misc.Unsafe access flag). -->
+                    <argLine>@{argLine} --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED ${extraArgLine}</argLine>
                 </configuration>
             </plugin>
             <plugin>
@@ -165,6 +172,10 @@
                 <version>12.2.0</version>
                 <configuration>
                     <failBuildOnCVSS>7</failBuildOnCVSS>
+                    <suppressionFile>owasp-suppressions.xml</suppressionFile>
+                    <!-- Don't fail the build when the NVD API is unavailable (429, timeouts).
+                         The scan will proceed with cached/local data instead. -->
+                    <failOnError>false</failOnError>
                 </configuration>
             </plugin>
             <!-- P1: Test coverage reporting -->
