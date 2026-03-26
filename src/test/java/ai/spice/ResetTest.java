@@ -409,8 +409,9 @@ public class ResetTest extends TestCase {
     // ==================== Integration: reset then query (server required) ====================
 
     /**
-     * If a local Spice runtime with TPC-H data is running, verify that
+     * If a local Spice runtime is running, verify that
      * reset() followed by query() actually returns data.
+     * Uses taxi_trips which is available in the CI quickstart dataset.
      */
     public void testResetThenQueryIntegration() throws Exception {
         if (!serverAvailable) return;
@@ -418,7 +419,7 @@ public class ResetTest extends TestCase {
         try (SpiceClient client = SpiceClient.builder().build()) {
             // First query (establishes connection)
             try (FlightStream stream1 = client.query(
-                    "SELECT c_custkey FROM tpch.customer LIMIT 1")) {
+                    "SELECT total_amount FROM taxi_trips LIMIT 1")) {
                 int rows1 = 0;
                 while (stream1.next()) {
                     rows1 += stream1.getRoot().getRowCount();
@@ -431,7 +432,7 @@ public class ResetTest extends TestCase {
 
             // Second query (lazy rebuild)
             try (FlightStream stream2 = client.query(
-                    "SELECT c_custkey FROM tpch.customer LIMIT 2")) {
+                    "SELECT total_amount FROM taxi_trips LIMIT 2")) {
                 int rows2 = 0;
                 while (stream2.next()) {
                     rows2 += stream2.getRoot().getRowCount();
@@ -444,6 +445,7 @@ public class ResetTest extends TestCase {
     /**
      * If a local Spice runtime is running, verify that
      * reset() followed by queryWithParams() actually returns data.
+     * Uses taxi_trips which is available in the CI quickstart dataset.
      */
     public void testResetThenQueryWithParamsIntegration() throws Exception {
         if (!serverAvailable) return;
@@ -451,8 +453,8 @@ public class ResetTest extends TestCase {
         try (SpiceClient client = SpiceClient.builder().build()) {
             // First query
             try (ArrowReader reader1 = client.queryWithParams(
-                    "SELECT c_custkey FROM tpch.customer WHERE c_custkey > $1 LIMIT 1",
-                    0)) {
+                    "SELECT total_amount FROM taxi_trips WHERE total_amount > $1 LIMIT 1",
+                    0.0)) {
                 int rows1 = 0;
                 while (reader1.loadNextBatch()) {
                     rows1 += reader1.getVectorSchemaRoot().getRowCount();
@@ -465,8 +467,8 @@ public class ResetTest extends TestCase {
 
             // Second query (re-initializes both Flight and ADBC)
             try (ArrowReader reader2 = client.queryWithParams(
-                    "SELECT c_custkey FROM tpch.customer WHERE c_custkey > $1 LIMIT 2",
-                    0)) {
+                    "SELECT total_amount FROM taxi_trips WHERE total_amount > $1 LIMIT 2",
+                    0.0)) {
                 int rows2 = 0;
                 while (reader2.loadNextBatch()) {
                     rows2 += reader2.getVectorSchemaRoot().getRowCount();

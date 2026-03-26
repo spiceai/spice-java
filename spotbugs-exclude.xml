@@ -11,6 +11,12 @@
         <Bug pattern="DLS_DEAD_LOCAL_STORE"/>
     </Match>
 
+    <!-- Example code: rough constants like 3.14 are intentional demo values for float params -->
+    <Match>
+        <Package name="ai.spice.example"/>
+        <Bug pattern="CNT_ROUGH_CONSTANT_VALUE"/>
+    </Match>
+
     <!-- Config: dead store in getUserAgent() -->
     <Match>
         <Class name="ai.spice.Config"/>
