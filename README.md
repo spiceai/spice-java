@@ -213,6 +213,44 @@ SpiceClient client = SpiceClient.builder()
     .build();
 ```
 
+### Long-lived Clients and Transport Resilience
+
+The `SpiceClient` is designed for long-lived reuse. The underlying gRPC channel uses `dns:///` resolution, which periodically re-resolves hostnames so clients automatically recover from load-balancer IP rotation (e.g. AWS NLB). HTTP/2 keep-alive is enabled by default (30s interval, 10s timeout) to detect dead connections quickly.
+
+For the rare case where the transport becomes permanently stuck (e.g. TLS handshake to a wrong backend, persistent `UNAVAILABLE` after retries), use `reset()` to discard the bad connection and immediately establish a fresh one:
+
+```java
+SpiceClient client = SpiceClient.builder()
+    .withApiKey(API_KEY)
+    .withSpiceCloud()
+    .build();
+
+// Long-lived usage with transport recovery.
+// isTransportFailure() is application-defined; check for
+// io.grpc.StatusRuntimeException with Status.UNAVAILABLE,
+// SSLHandshakeException, or similar transport-level errors.
+try {
+    try (FlightStream stream = client.query(sql)) {
+        // process results...
+    }
+} catch (ExecutionException e) {
+    if (isTransportFailure(e.getCause())) {
+        client.reset();                     // discard bad transport, reconnect immediately
+        try (FlightStream stream = client.query(sql)) {
+            // process results with fresh connection...
+        }
+    } else {
+        throw e;
+    }
+}
+```
+
+**DNS cache TTL:** The gRPC `DnsNameResolver` respects the JVM's DNS cache TTL. For more aggressive DNS refresh (recommended for cloud-deployed clients), set the JVM property:
+
+```bash
+-Dnetworkaddress.cache.ttl=30
+```
+
 ### Iterating Through Results
 
 For more control over query results, you can iterate through rows and access individual field values:

@@ -97,6 +97,14 @@ jobs:
           path: target/surefire-reports/
           retention-days: 7
 
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-${{ matrix.os }}
+          path: target/site/jacoco/
+          retention-days: 7
+
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -178,3 +186,52 @@ jobs:
           name: test-results-jdk${{ matrix.java.version }}-${{ matrix.java.distribution }}
           path: target/surefire-reports/
           retention-days: 7
+
+  quality:
+    name: Code quality checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Oracle)
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: oracle
+          cache: maven
+
+      - name: Build
+        run: mvn install -DskipTests=true -Dgpg.skip -B -V
+
+      - name: Maven Enforcer
+        run: mvn validate -B
+
+      - name: SpotBugs
+        run: mvn spotbugs:check -B
+
+      - name: Checkstyle
+        run: mvn checkstyle:check -B
+
+      - name: Cache OWASP Dependency-Check data
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: dependency-check-data-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            dependency-check-data-${{ runner.os }}-
+
+      - name: OWASP Dependency-Check
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: mvn dependency-check:check -B
+
+      - name: Upload dependency-check report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: target/dependency-check-report.html
+          retention-days: 30

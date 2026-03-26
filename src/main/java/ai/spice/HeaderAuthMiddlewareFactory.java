@@ -21,21 +21,23 @@ public class HeaderAuthMiddlewareFactory implements Factory {
 
     @Override
     public FlightClientMiddleware onCallStarted(CallInfo callInfo) {
+        // Create the auth middleware once per RPC, not once per callback
+        final FlightClientMiddleware authMiddleware = authFactory.onCallStarted(callInfo);
         return new FlightClientMiddleware() {
             @Override
             public void onBeforeSendingHeaders(CallHeaders callHeaders) {
-                authFactory.onCallStarted(callInfo).onBeforeSendingHeaders(callHeaders);
+                authMiddleware.onBeforeSendingHeaders(callHeaders);
                 headers.forEach(callHeaders::insert);
             }
 
             @Override
             public void onHeadersReceived(CallHeaders callHeaders) {
-                authFactory.onCallStarted(callInfo).onHeadersReceived(callHeaders);
+                authMiddleware.onHeadersReceived(callHeaders);
             }
 
             @Override
             public void onCallCompleted(CallStatus callStatus) {
-                authFactory.onCallStarted(callInfo).onCallCompleted(callStatus);
+                authMiddleware.onCallCompleted(callStatus);
             }
         };
     }

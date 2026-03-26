@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs exclusion filter for pre-existing findings.
+  These are findings in code that predates the introduction of SpotBugs.
+  They should be addressed in follow-up PRs.
+-->
+<FindBugsFilter>
+    <!-- Example code: dead stores are intentional (demonstrating all param types) -->
+    <Match>
+        <Package name="ai.spice.example"/>
+        <Bug pattern="DLS_DEAD_LOCAL_STORE"/>
+    </Match>
+
+    <!-- Example code: rough constants like 3.14 are intentional demo values for float params -->
+    <Match>
+        <Package name="ai.spice.example"/>
+        <Bug pattern="CNT_ROUGH_CONSTANT_VALUE"/>
+    </Match>
+
+    <!-- Config: dead store in getUserAgent() -->
+    <Match>
+        <Class name="ai.spice.Config"/>
+        <Bug pattern="DLS_DEAD_LOCAL_STORE"/>
+    </Match>
+
+    <!-- HeaderAuthMiddlewareFactory: internal representation exposure (by design, internal class) -->
+    <Match>
+        <Class name="ai.spice.HeaderAuthMiddlewareFactory"/>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!-- RefreshOptions: public fields are part of the public API -->
+    <Match>
+        <Class name="ai.spice.RefreshOptions"/>
+        <Bug pattern="PA_PUBLIC_PRIMITIVE_ATTRIBUTE"/>
+    </Match>
+
+    <!-- Constructor-throw warnings: these constructors intentionally validate/fail early -->
+    <Match>
+        <Class name="ai.spice.SpiceClient"/>
+        <Bug pattern="CT_CONSTRUCTOR_THROW"/>
+    </Match>
+    <Match>
+        <Class name="ai.spice.SpiceClientBuilder"/>
+        <Bug pattern="CT_CONSTRUCTOR_THROW"/>
+    </Match>
+</FindBugsFilter>
