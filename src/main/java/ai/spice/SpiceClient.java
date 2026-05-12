@@ -137,10 +137,8 @@ public class SpiceClient implements AutoCloseable {
     private static final int MAX_INBOUND_MESSAGE_SIZE = Integer.MAX_VALUE;
     private static final int MAX_INBOUND_METADATA_SIZE = Integer.MAX_VALUE;
 
-    // Cached HttpClient for refresh operations (thread-safe, connection pooling)
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
-            .build();
+    // HttpClient for refresh operations (thread-safe, connection pooling)
+    private final HttpClient httpClient;
     
     // Pre-computed parameter field names to avoid string concatenation in hot path
     private static final String[] PARAM_NAMES = new String[64];
@@ -156,6 +154,9 @@ public class SpiceClient implements AutoCloseable {
     private URI flightAddress;
     private URI httpAddress;
     private int maxRetries;
+    private String tlsClientCertFile;
+    private String tlsClientKeyFile;
+    private String tlsRootCertFile;
     private FlightSqlClient flightClient;
     private CredentialCallOption authCallOptions = null;
     private BufferAllocator allocator;
@@ -200,11 +201,24 @@ public class SpiceClient implements AutoCloseable {
      */
     public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries,
             String userAgent, long memoryLimitMB) {
+        this(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB, null, null);
+    }
+
+    public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries,
+            String userAgent, long memoryLimitMB, String tlsClientCertFile, String tlsClientKeyFile) {
+        this(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB, tlsClientCertFile, tlsClientKeyFile, null);
+    }
+
+    public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries,
+            String userAgent, long memoryLimitMB, String tlsClientCertFile, String tlsClientKeyFile, String tlsRootCertFile) {
         this.appId = appId;
         this.apiKey = apiKey;
         this.maxRetries = maxRetries;
         this.httpAddress = httpAddress;
         this.userAgent = userAgent;
+        this.tlsClientCertFile = tlsClientCertFile;
+        this.tlsClientKeyFile = tlsClientKeyFile;
+        this.tlsRootCertFile = tlsRootCertFile;
 
         // Arrow Flight requires URI to be grpc protocol, convert http/https for
         // convinience
@@ -222,6 +236,19 @@ public class SpiceClient implements AutoCloseable {
                 ? Long.MAX_VALUE
                 : memoryLimitMB * BYTES_PER_MB;
         this.allocator = new RootAllocator(memoryLimitBytes);
+
+        // Build the HTTP client with optional mTLS support
+        HttpClient.Builder httpBuilder = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(15));
+        if (this.tlsRootCertFile != null || (this.tlsClientCertFile != null && this.tlsClientKeyFile != null)) {
+            try {
+                javax.net.ssl.SSLContext sslContext = buildSslContext();
+                httpBuilder.sslContext(sslContext);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to configure TLS for HTTP client", e);
+            }
+        }
+        this.httpClient = httpBuilder.build();
 
         try {
             // Build the Flight client (channel + auth handshake)
@@ -274,8 +301,17 @@ public class SpiceClient implements AutoCloseable {
         NettyChannelBuilder channelBuilder = NettyChannelBuilder.forTarget(target);
         if (useTls) {
             try {
+                var sslContextBuilder = GrpcSslContexts.forClient();
+                if (this.tlsClientCertFile != null && this.tlsClientKeyFile != null) {
+                    sslContextBuilder.keyManager(
+                            new java.io.File(this.tlsClientCertFile),
+                            new java.io.File(this.tlsClientKeyFile));
+                }
+                if (this.tlsRootCertFile != null) {
+                    sslContextBuilder.trustManager(new java.io.File(this.tlsRootCertFile));
+                }
                 channelBuilder.useTransportSecurity()
-                        .sslContext(GrpcSslContexts.forClient().build());
+                        .sslContext(sslContextBuilder.build());
             } catch (Exception e) {
                 throw new RuntimeException("Failed to configure TLS for Flight client", e);
             }
@@ -404,6 +440,76 @@ public class SpiceClient implements AutoCloseable {
 
     /**
      * Initializes the cached retryer instances.
+    /**
+     * Builds an SSLContext configured with the custom CA and/or client certificate
+     * for the JDK HTTP client.
+     */
+    private javax.net.ssl.SSLContext buildSslContext() throws Exception {
+        // Ensure BouncyCastle provider is registered for PEM private key parsing
+        if (java.security.Security.getProvider("BC") == null) {
+            java.security.Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
+        }
+
+        javax.net.ssl.KeyManager[] keyManagers = null;
+        javax.net.ssl.TrustManager[] trustManagers = null;
+
+        if (this.tlsClientCertFile != null && this.tlsClientKeyFile != null) {
+            // Load the client certificate
+            java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X.509");
+            java.security.cert.Certificate clientCert;
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(this.tlsClientCertFile)) {
+                clientCert = cf.generateCertificate(fis);
+            }
+
+            // Parse the PEM private key using BouncyCastle
+            java.security.PrivateKey privateKey;
+            try (java.io.FileReader keyReader = new java.io.FileReader(this.tlsClientKeyFile, java.nio.charset.StandardCharsets.UTF_8);
+                 org.bouncycastle.openssl.PEMParser pemParser = new org.bouncycastle.openssl.PEMParser(keyReader)) {
+                Object parsed = pemParser.readObject();
+                org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter converter =
+                        new org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter().setProvider("BC");
+                if (parsed instanceof org.bouncycastle.asn1.pkcs.PrivateKeyInfo) {
+                    privateKey = converter.getPrivateKey((org.bouncycastle.asn1.pkcs.PrivateKeyInfo) parsed);
+                } else if (parsed instanceof org.bouncycastle.openssl.PEMKeyPair) {
+                    privateKey = converter.getPrivateKey(((org.bouncycastle.openssl.PEMKeyPair) parsed).getPrivateKeyInfo());
+                } else {
+                    throw new IllegalArgumentException("Unsupported PEM key format in " + this.tlsClientKeyFile);
+                }
+            }
+
+            // Build a KeyStore with the client identity
+            java.security.KeyStore keyStore = java.security.KeyStore.getInstance("PKCS12");
+            keyStore.load(null, null);
+            keyStore.setKeyEntry("client", privateKey, new char[0],
+                    new java.security.cert.Certificate[]{clientCert});
+            javax.net.ssl.KeyManagerFactory kmf = javax.net.ssl.KeyManagerFactory.getInstance(
+                    javax.net.ssl.KeyManagerFactory.getDefaultAlgorithm());
+            kmf.init(keyStore, new char[0]);
+            keyManagers = kmf.getKeyManagers();
+        }
+
+        if (this.tlsRootCertFile != null) {
+            java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X.509");
+            java.security.KeyStore trustStore = java.security.KeyStore.getInstance(java.security.KeyStore.getDefaultType());
+            trustStore.load(null, null);
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(this.tlsRootCertFile)) {
+                int i = 0;
+                for (java.security.cert.Certificate cert : cf.generateCertificates(fis)) {
+                    trustStore.setCertificateEntry("custom-ca-" + i++, cert);
+                }
+            }
+            javax.net.ssl.TrustManagerFactory tmf = javax.net.ssl.TrustManagerFactory.getInstance(
+                    javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(trustStore);
+            trustManagers = tmf.getTrustManagers();
+        }
+
+        javax.net.ssl.SSLContext sslContext = javax.net.ssl.SSLContext.getInstance("TLS");
+        sslContext.init(keyManagers, trustManagers, null);
+        return sslContext;
+    }
+
+    /**
      * Called from constructor and must be called after maxRetries is set.
      */
     private void initRetryers() {
@@ -1017,7 +1123,7 @@ public class SpiceClient implements AutoCloseable {
             }
 
             HttpRequest request = builder.build();
-            HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 201) {
                 logger.error("Dataset refresh failed - dataset={}, statusCode={}, response={}", dataset, response.statusCode(), response.body());
