@@ -39,6 +39,9 @@ public class SpiceClientBuilder {
     private URI httpAddress;
     private int maxRetries = 3;
     private long memoryLimitMB = Long.MAX_VALUE; // Default is all available memory.
+    private String tlsClientCertFile;
+    private String tlsClientKeyFile;
+    private String tlsRootCertFile;
 
     /**
      * Constructs a new SpiceClientBuilder instance
@@ -168,11 +171,55 @@ public class SpiceClientBuilder {
     }
 
     /**
+     * Sets the path to a PEM-encoded client certificate file for mTLS.
+     * Must be used together with {@link #withTlsClientKeyFile(String)}.
+     *
+     * @param certFile Path to the client certificate PEM file
+     * @return The current instance of SpiceClientBuilder for method chaining.
+     */
+    public SpiceClientBuilder withTlsClientCertFile(String certFile) {
+        this.tlsClientCertFile = certFile;
+        return this;
+    }
+
+    /**
+     * Sets the path to a PEM-encoded client private key file for mTLS.
+     * Must be used together with {@link #withTlsClientCertFile(String)}.
+     *
+     * @param keyFile Path to the client private key PEM file
+     * @return The current instance of SpiceClientBuilder for method chaining.
+     */
+    public SpiceClientBuilder withTlsClientKeyFile(String keyFile) {
+        this.tlsClientKeyFile = keyFile;
+        return this;
+    }
+
+    /**
+     * Sets the path to a PEM-encoded CA certificate file for server verification.
+     * When set, this CA is used instead of the system trust store.
+     *
+     * @param caFile Path to the CA certificate PEM file
+     * @return The current instance of SpiceClientBuilder for method chaining.
+     */
+    public SpiceClientBuilder withTlsRootCertFile(String caFile) {
+        this.tlsRootCertFile = caFile;
+        return this;
+    }
+
+    /**
      * Creates SpiceClient with provided parameters.
      *
      * @return The SpiceClient instance
      */
     public SpiceClient build() {
-        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB);
+        // Validate that client cert and key are either both set or both unset
+        boolean hasCert = tlsClientCertFile != null && !tlsClientCertFile.isBlank();
+        boolean hasKey = tlsClientKeyFile != null && !tlsClientKeyFile.isBlank();
+        if (hasCert != hasKey) {
+            throw new IllegalArgumentException(
+                    "Both tlsClientCertFile and tlsClientKeyFile must be provided together for mTLS. "
+                    + (hasCert ? "tlsClientKeyFile is missing." : "tlsClientCertFile is missing."));
+        }
+        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB, tlsClientCertFile, tlsClientKeyFile, tlsRootCertFile);
     }
 }
