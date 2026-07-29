@@ -1142,8 +1142,11 @@ public class SpiceClient implements AutoCloseable {
                 return false;
             }
 
+            // Compare the whole trimmed body, not a substring: "not ready"
+            // contains "ready", so a substring test reports a loading runtime as
+            // ready. These endpoints return a single token.
             String body = response.body();
-            return body != null && body.toLowerCase().contains(expectedBody);
+            return body != null && body.trim().equalsIgnoreCase(expectedBody);
         } catch (InterruptedException err) {
             Thread.currentThread().interrupt();
             logger.debug("Probe {} interrupted", path);
@@ -1165,8 +1168,12 @@ public class SpiceClient implements AutoCloseable {
      */
     static HttpRequest buildProbeRequest(URI httpAddress, String path, String apiKey)
             throws URISyntaxException {
+        // Resolve rather than concatenate: a base address with a trailing slash
+        // would otherwise produce "http://host:8090//v1/ready".
+        URI uri = httpAddress.resolve(path.startsWith("/") ? path : "/" + path);
+
         HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(new URI(String.format("%s%s", httpAddress, path)))
+                .uri(uri)
                 .header("X-Spice-User-Agent", Config.getUserAgent())
                 .GET();
 

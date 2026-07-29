@@ -133,6 +133,39 @@ public class RuntimeStatusTest extends TestCase {
         assertFalse("a loading runtime should not report ready", this.client.isReady());
     }
 
+    public void testIsReadyRejectsNotReadyBodyOn200() throws Exception {
+        // "not ready" contains "ready", so a substring check would report this
+        // loading runtime as ready.
+        startServer();
+        stub("/v1/ready", 200, "not ready");
+        this.client = clientForServer(null);
+
+        assertFalse("a body of \"not ready\" is not ready", this.client.isReady());
+    }
+
+    public void testIsReadyToleratesSurroundingWhitespace() throws Exception {
+        startServer();
+        stub("/v1/ready", 200, "ready\n");
+        this.client = clientForServer(null);
+
+        assertTrue("a trailing newline should not matter", this.client.isReady());
+    }
+
+    public void testProbeRequestResolvesTrailingSlashBase() throws Exception {
+        // A base address with a trailing slash must not yield a doubled slash.
+        HttpRequest request = SpiceClient.buildProbeRequest(
+                new URI("http://127.0.0.1:8090/"), "/v1/ready", null);
+
+        assertEquals("http://127.0.0.1:8090/v1/ready", request.uri().toString());
+    }
+
+    public void testProbeRequestHandlesBaseWithoutTrailingSlash() throws Exception {
+        HttpRequest request = SpiceClient.buildProbeRequest(
+                new URI("http://127.0.0.1:8090"), "/v1/status", null);
+
+        assertEquals("http://127.0.0.1:8090/v1/status", request.uri().toString());
+    }
+
     // Building a client with an API key eagerly handshakes against Flight, so the
     // authenticated paths are covered at the request-building level instead.
 
