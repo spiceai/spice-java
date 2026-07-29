@@ -68,7 +68,20 @@ jobs:
         run: |
           spice init spice_qs
           cd spice_qs
-          spice add spiceai/quickstart
+          # Define the dataset inline rather than fetching spiceai/quickstart from
+          # the Spicepod registry, which currently returns a body the CLI cannot
+          # unpack ("Failed to extract Spicepod archive: Could not find EOCD").
+          cat >> spicepod.yaml <<'YAML'
+
+          datasets:
+            - from: s3://spiceai-demo-datasets/taxi_trips/2024/
+              name: taxi_trips
+              description: taxi trips in s3
+              params:
+                file_format: parquet
+              acceleration:
+                enabled: true
+          YAML
           spiced &> spice.log &
           # time to initialize added dataset
           sleep 10
@@ -78,7 +91,20 @@ jobs:
         run: |
           spice init spice_qs
           cd spice_qs
-          spice add spiceai/quickstart
+          # Define the dataset inline rather than fetching spiceai/quickstart from
+          # the Spicepod registry, which currently returns a body the CLI cannot
+          # unpack ("Failed to extract Spicepod archive: Could not find EOCD").
+          @'
+
+          datasets:
+            - from: s3://spiceai-demo-datasets/taxi_trips/2024/
+              name: taxi_trips
+              description: taxi trips in s3
+              params:
+                file_format: parquet
+              acceleration:
+                enabled: true
+          '@ | Add-Content -Path spicepod.yaml
           Start-Process -FilePath spice run
           # time to initialize added dataset
           Start-Sleep -Seconds 10
@@ -169,7 +195,20 @@ jobs:
         run: |
           spice init spice_qs
           cd spice_qs
-          spice add spiceai/quickstart
+          # Define the dataset inline rather than fetching spiceai/quickstart from
+          # the Spicepod registry, which currently returns a body the CLI cannot
+          # unpack ("Failed to extract Spicepod archive: Could not find EOCD").
+          cat >> spicepod.yaml <<'YAML'
+
+          datasets:
+            - from: s3://spiceai-demo-datasets/taxi_trips/2024/
+              name: taxi_trips
+              description: taxi trips in s3
+              params:
+                file_format: parquet
+              acceleration:
+                enabled: true
+          YAML
           spice run &> spice.log &
           # time to initialize added dataset
           sleep 10
