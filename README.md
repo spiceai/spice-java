@@ -373,6 +373,48 @@ client.refresh("taxi_trips")
 
 ```
 
+#### Health, readiness, and status
+
+Use `isHealthy()` and `isReady()` to probe the runtime, and `runtimeStatus()` for
+per-component detail. See the full [health and status example](/src/main/java/ai/spice/example/ExampleHealthAndStatus.java).
+
+```java
+SpiceClient client = SpiceClient.builder()
+    ..
+    .build();
+
+// Liveness — is the runtime up? Unauthenticated.
+if (!client.isHealthy()) {
+    return;
+}
+
+// Readiness — the runtime becomes ready once its datasets have loaded, so a
+// runtime can be healthy but not yet queryable.
+while (!client.isReady()) {
+    Thread.sleep(1000);
+}
+```
+
+Both return `false` rather than throwing when the runtime is unreachable, so they can be
+polled directly in a loop.
+
+`runtimeStatus()` returns one `ConnectionDetails` per runtime connection — `http`,
+`flight`, `metrics`, and `opentelemetry` — naming which component is not ready and where
+it is bound. That makes it strictly more informative than the boolean `isReady()`:
+
+```java
+for (ConnectionDetails connection : client.runtimeStatus()) {
+    System.out.printf("%s %s %s%n",
+        connection.getName(),        // "flight"
+        connection.getEndpoint(),    // "127.0.0.1:50051"
+        connection.getStatus());     // ComponentStatus.READY
+}
+```
+
+`getStatus()` returns a `ComponentStatus` — `INITIALIZING`, `READY`, `DISABLED`, `ERROR`,
+`REFRESHING`, `SHUTTING_DOWN`, or `NOT_LOADED`. A status a newer runtime introduces maps to
+`UNKNOWN` rather than failing; `getRawStatus()` returns it verbatim.
+
 ### Logging
 
 The SDK uses SLF4J for logging, allowing you to plug in your preferred logging implementation (Logback, Log4j2, java.util.logging, etc.).
