@@ -226,9 +226,9 @@ public class ResilienceTest extends TestCase {
             executor.submit(() -> {
                 try {
                     start.await();
-                    for (int i = 0; i < 5; i++) {
+                    for (int i = 0; i < 8; i++) {
                         client.reset();
-                        Thread.sleep(40);
+                        Thread.sleep(15);
                     }
                 } catch (Throwable e) {
                     failures.add(e);
@@ -242,7 +242,7 @@ public class ResilienceTest extends TestCase {
                                 "SELECT * FROM t WHERE id=$1", (long) i)) {
                             LocalFlightServerTest.countRows(reader);
                         }
-                        Thread.sleep(10);
+                        Thread.sleep(5);
                     }
                 } catch (Throwable e) {
                     failures.add(e);

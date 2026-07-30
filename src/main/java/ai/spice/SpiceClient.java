@@ -186,6 +186,15 @@ public class SpiceClient implements AutoCloseable {
      * {@link #reset()}, lazy rebuild, and UNAUTHENTICATED recovery.
      */
     private volatile FlightChannel[] channels;
+
+    /**
+     * Channels replaced by {@link #reset()} or an auth rebuild whose transport
+     * has been gracefully shut down but whose Flight client (and buffer
+     * allocator) cannot be closed yet because RPCs or result streams may still
+     * be in flight on them. Swept once the transport reports terminated.
+     * Guarded by the client monitor.
+     */
+    private final List<FlightChannel> retiredChannels = new ArrayList<>();
     private volatile boolean closed = false;
 
     // HttpClient for refresh operations, created lazily on first use so clients
@@ -298,13 +307,17 @@ public class SpiceClient implements AutoCloseable {
      * per-connection auth token and pre-computed call options.
      */
     private static final class FlightChannel {
+        /** The underlying transport, retained for graceful retirement. */
+        final ManagedChannel grpcChannel;
         final FlightSqlClient client;
         /** Options for control-plane RPCs (GetFlightInfo, prepare, DoPut): auth + optional timeout. */
         final CallOption[] callOptions;
         /** Options for DoGet streams: auth only — a deadline would kill long-running result streams. */
         final CallOption[] streamOptions;
 
-        FlightChannel(FlightSqlClient client, CallOption[] callOptions, CallOption[] streamOptions) {
+        FlightChannel(ManagedChannel grpcChannel, FlightSqlClient client, CallOption[] callOptions,
+                CallOption[] streamOptions) {
+            this.grpcChannel = grpcChannel;
             this.client = client;
             this.callOptions = callOptions;
             this.streamOptions = streamOptions;
@@ -535,7 +548,7 @@ public class SpiceClient implements AutoCloseable {
             }
             CallOption[] callOptions = options.toArray(new CallOption[0]);
 
-            return new FlightChannel(new FlightSqlClient(client), callOptions, streamOptions);
+            return new FlightChannel(channel, new FlightSqlClient(client), callOptions, streamOptions);
         } catch (Exception e) {
             // Ensure the channel is shut down if client creation or handshake fails
             // to avoid leaking threads and file descriptors on repeated rebuild attempts.
@@ -608,11 +621,12 @@ public class SpiceClient implements AutoCloseable {
         }
         logger.info("Resetting SpiceClient transport");
 
-        // Close cached prepared statements while their channels are still open,
-        // then close the channels themselves.
+        // Close cached prepared statements while their channels still accept
+        // RPCs, then retire the channels (graceful shutdown; deferred close so
+        // concurrent in-flight queries can finish on them).
         closeStatementsQuietly(statementCache.swapGeneration(null));
-        closeChannelsQuietly();
-        this.channels = null;
+        retireChannelsLocked();
+        sweepRetiredChannels(false);
 
         // Eagerly re-establish the connections so the next query has no setup overhead
         buildFlightChannels();
@@ -636,8 +650,8 @@ public class SpiceClient implements AutoCloseable {
             }
             logger.info("Received UNAUTHENTICATED from server; re-authenticating with a fresh handshake");
             closeStatementsQuietly(statementCache.swapGeneration(null));
-            closeChannelsQuietly();
-            this.channels = null;
+            retireChannelsLocked();
+            sweepRetiredChannels(false);
             try {
                 buildFlightChannels();
             } catch (RuntimeException rebuildError) {
@@ -968,13 +982,45 @@ public class SpiceClient implements AutoCloseable {
         }
     }
 
-    private void closeChannelsQuietly() {
+    /**
+     * Retires the current channels: the gRPC transports are shut down
+     * gracefully — in-flight RPCs and open result streams complete, new RPCs
+     * fail with a retryable UNAVAILABLE — but the Flight clients (and their
+     * buffer allocators) stay open until {@link #sweepRetiredChannels} sees
+     * the transport terminate. Closing them inline would tear the allocator
+     * out from under concurrent queries mid-RPC.
+     * Must be called while holding the client monitor.
+     */
+    private void retireChannelsLocked() {
         FlightChannel[] snapshot = this.channels;
         if (snapshot == null) {
             return;
         }
         for (FlightChannel channel : snapshot) {
-            closeChannelQuietly(channel, null);
+            try {
+                channel.grpcChannel.shutdown();
+            } catch (RuntimeException e) {
+                logger.warn("Error shutting down Flight transport: {}", e.getMessage());
+            }
+            retiredChannels.add(channel);
+        }
+        this.channels = null;
+    }
+
+    /**
+     * Closes retired channels whose transport has fully terminated (no RPCs or
+     * streams remain). With {@code force}, closes them regardless — used by
+     * {@link #close()}, where interrupting anything still in flight is the
+     * documented behavior.
+     * Must be called while holding the client monitor.
+     */
+    private void sweepRetiredChannels(boolean force) {
+        for (java.util.Iterator<FlightChannel> it = retiredChannels.iterator(); it.hasNext();) {
+            FlightChannel channel = it.next();
+            if (force || channel.grpcChannel.isTerminated()) {
+                closeChannelQuietly(channel, null);
+                it.remove();
+            }
         }
     }
 
@@ -1600,20 +1646,24 @@ public class SpiceClient implements AutoCloseable {
             exceptions.add(e);
         }
 
-        // Close Flight channels
+        // Close Flight channels: current ones and any retired channels whose
+        // in-flight work never finished.
         FlightChannel[] snapshot = this.channels;
         this.channels = null;
+        List<FlightChannel> toClose = new ArrayList<>(retiredChannels);
+        retiredChannels.clear();
         if (snapshot != null) {
-            for (FlightChannel channel : snapshot) {
-                try {
-                    channel.client.close();
-                } catch (Exception e) {
-                    logger.warn("Error closing Flight channel: {}", e.getMessage());
-                    exceptions.add(e);
-                }
-            }
-            logger.debug("Flight channels closed");
+            toClose.addAll(java.util.Arrays.asList(snapshot));
         }
+        for (FlightChannel channel : toClose) {
+            try {
+                channel.client.close();
+            } catch (Exception e) {
+                logger.warn("Error closing Flight channel: {}", e.getMessage());
+                exceptions.add(e);
+            }
+        }
+        logger.debug("Flight channels closed");
 
         // Close allocator
         try {
