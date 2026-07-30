@@ -12,7 +12,7 @@ Add the following dependency to your Maven project:
 <dependency>
   <groupId>ai.spice</groupId>
   <artifactId>spiceai</artifactId>
-  <version>0.6.0</version>
+  <version>0.7.0</version>
   <scope>compile</scope>
 </dependency>
 ```
@@ -22,7 +22,7 @@ Add the following dependency to your Maven project:
 Add the following dependency to your Gradle project:
 
 ```groovy
-implementation 'ai.spice:spiceai:0.6.0'
+implementation 'ai.spice:spiceai:0.7.0'
 ```
 
 ### Manual installation

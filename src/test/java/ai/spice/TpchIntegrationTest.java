@@ -58,7 +58,7 @@ public class TpchIntegrationTest extends TestCase {
         if (tpchAvailableCached == null) {
             synchronized (TpchIntegrationTest.class) {
                 if (tpchAvailableCached == null) {
-                    try (SpiceClient probe = SpiceClient.builder().withMaxRetries(0).build();
+                    try (SpiceClient probe = SpiceClient.builder().withMaxRetries(1).build();
                             FlightStream stream = probe.query("SELECT c_custkey FROM tpch.customer LIMIT 1")) {
                         stream.next();
                         tpchAvailableCached = Boolean.TRUE;

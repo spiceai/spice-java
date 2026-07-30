@@ -78,9 +78,9 @@ public class FlightQueryTest
 
     public void testQuerySpiceOSS() throws ExecutionException, InterruptedException {
         try {
-            // maxRetries=0: keep the no-local-server skip path fast under real backoff
+            // One retry: resilient availability detection without paying full backoff when absent
             SpiceClient spiceClient = SpiceClient.builder()
-                    .withMaxRetries(0)
+                    .withMaxRetries(1)
                     .build();
 
             String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 10;";
@@ -140,35 +140,28 @@ public class FlightQueryTest
             SpiceClient spiceClient = SpiceClient.builder()
                     .build();
 
-            FlightStream preRefreshRes = spiceClient.query(sql);
-
-            int preRefreshRows = 0;
-
-            while (preRefreshRes.next()) {
-                VectorSchemaRoot root = preRefreshRes.getRoot();
-                preRefreshRows += root.getRowCount();
+            // A previous run of this test leaves the accelerated table at 10 rows
+            // (refreshes are asynchronous and the refresh_sql persists in the
+            // acceleration). Restore the full dataset first so the pre-condition
+            // holds on reused runtimes, not only on freshly started ones.
+            if (countRows(spiceClient, sql) < 20) {
+                spiceClient.refreshDataset("taxi_trips");
+                waitForRowCount(spiceClient, sql, 20);
             }
 
-            assertEquals("Expected row count does not match", 20, preRefreshRows);
+            assertEquals("Expected row count does not match", 20, countRows(spiceClient, sql));
 
             RefreshOptions opts = new RefreshOptions().withRefreshSql("SELECT * FROM taxi_trips limit 10")
                     .withRefreshJitterMax("1s");
 
             spiceClient.refreshDataset("taxi_trips", opts);
 
-            // wait a couple seconds to let refresh run
-            Thread.sleep(10000);
+            // Refreshes are asynchronous: poll until the shrunk dataset is visible
+            // instead of relying on a fixed sleep.
+            assertEquals("Expected row count does not match", 10, waitForRowCount(spiceClient, sql, 10));
 
-            FlightStream postRefreshRes = spiceClient.query(sql);
-
-            int postRefreshRows = 0;
-
-            while (postRefreshRes.next()) {
-                VectorSchemaRoot root = postRefreshRes.getRoot();
-                postRefreshRows += root.getRowCount();
-            }
-
-            assertEquals("Expected row count does not match", 10, postRefreshRows);
+            // Leave the dataset restored for other tests and later runs (async).
+            spiceClient.refreshDataset("taxi_trips");
         } catch (Exception e) {
             // Skip if table not found, connection unavailable, or acceleration not ready
             String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
@@ -177,5 +170,31 @@ public class FlightQueryTest
             }
             fail("Should not throw exception: " + e.getMessage());
         }
+    }
+
+    private static long countRows(SpiceClient client, String sql) throws Exception {
+        try (FlightStream stream = client.query(sql)) {
+            long rows = 0;
+            while (stream.next()) {
+                rows += stream.getRoot().getRowCount();
+            }
+            return rows;
+        }
+    }
+
+    /**
+     * Polls (up to 30s) until the query returns the expected row count,
+     * returning the last observed count either way.
+     */
+    private static long waitForRowCount(SpiceClient client, String sql, long expected) throws Exception {
+        long rows = -1;
+        for (int i = 0; i < 30; i++) {
+            rows = countRows(client, sql);
+            if (rows == expected) {
+                return rows;
+            }
+            Thread.sleep(1000);
+        }
+        return rows;
     }
 }

@@ -53,7 +53,7 @@ public class ResetTest extends TestCase {
         if (!serverAvailabilityChecked) {
             synchronized (ResetTest.class) {
                 if (!serverAvailabilityChecked) {
-                    try (SpiceClient probe = SpiceClient.builder().withMaxRetries(0).build()) {
+                    try (SpiceClient probe = SpiceClient.builder().withMaxRetries(1).build()) {
                         // Probe with taxi_trips (not SELECT 1) to ensure
                         // the dataset is loaded and ready, not just that
                         // the server is up.
