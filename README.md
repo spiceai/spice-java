@@ -118,11 +118,28 @@ SpiceClient client = SpiceClient.builder()
 ```
 
 Retries are performed for connection and system internal errors. It is the SDK user's responsibility to properly
-handle other errors, for example RESOURCE_EXHAUSTED (HTTP 429).
+handle other errors, for example RESOURCE_EXHAUSTED (HTTP 429). Retries use exponential backoff with jitter
+(~250ms, 500ms, 1s, ... capped at 10s). If the server reports an expired authentication token
+(UNAUTHENTICATED), the client automatically re-handshakes and retries.
+
+### Performance Tuning
+
+```java
+SpiceClient client = SpiceClient.builder()
+    // Number of gRPC connections; queries are distributed round-robin.
+    // Increase for highly concurrent workloads with large result streams.
+    .withChannelCount(4)
+    // Deadline for query planning and statement preparation RPCs
+    // (result streaming is not limited by this timeout).
+    .withQueryTimeout(Duration.ofSeconds(30))
+    // Max idle prepared statements reused by queryWithParams (default 64, 0 disables).
+    .withPreparedStatementCacheSize(128)
+    .build();
+```
 
 ### Parameterized Queries (Recommended)
 
-The SDK supports parameterized queries using ADBC (Arrow Database Connectivity), which is the recommended approach for queries with user input to prevent SQL injection:
+The SDK supports parameterized queries using Arrow Flight SQL prepared statements, which is the recommended approach for queries with user input to prevent SQL injection. Prepared statements are cached and reused across repeated executions of the same SQL, and run on the same tuned connection as regular queries (DNS re-resolution, keep-alive, mTLS):
 
 ```java
 import org.apache.arrow.vector.VectorSchemaRoot;

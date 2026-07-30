@@ -294,7 +294,12 @@ try {
 2. **Explicit Types**: No overhead, types are directly specified
 3. **Arrow Conversion**: Zero-copy when possible, efficient serialization
 4. **Large Data**: Use Large variants (LargeString, LargeBinary) for > 2GB data
-5. **Connection Reuse**: ADBC connection is initialized lazily and reused
+5. **Statement Reuse**: Prepared statements are cached per SQL string and reused,
+   removing the create/close round trips from repeated queries. Tune with
+   `withPreparedStatementCacheSize(n)` (default 64; 0 disables caching).
+6. **Connection Reuse**: Parameterized queries share the same gRPC channels as
+   regular queries — one connection pool, one set of keep-alive/DNS/mTLS settings.
+   Use `withChannelCount(n)` for highly concurrent workloads.
 
 ## Security Benefits
 
