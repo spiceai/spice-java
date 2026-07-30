@@ -899,8 +899,15 @@ public class SpiceClient implements AutoCloseable {
             }
 
             // The statement is healthy: return it to the cache before opening the
-            // result stream so other threads can reuse it immediately. The result
-            // stream is served by its ticket and does not depend on the statement.
+            // result stream so other threads can reuse it immediately.
+            //
+            // Safe because only bind+execute mutates statement state — and the
+            // cache hands a statement to at most one thread at a time for that
+            // phase. The result stream is served by the self-contained ticket
+            // minted by execute(), not by live statement state: the previous
+            // implementation closed the server-side statement outright at this
+            // point (reader still open) and reads were unaffected, so a later
+            // re-bind on the same handle cannot alter an already-issued ticket.
             if (!statementCache.give(sql, statement)) {
                 closeStatementQuietly(statement);
             }
@@ -1538,6 +1545,11 @@ public class SpiceClient implements AutoCloseable {
         try {
             FlightInfo flightInfo = channel.client.execute(sql, channel.callOptions);
             List<FlightEndpoint> endpoints = flightInfo.getEndpoints();
+            if (endpoints.isEmpty()) {
+                throw CallStatus.INTERNAL
+                        .withDescription("Server returned a FlightInfo with no endpoints for the query")
+                        .toRuntimeException();
+            }
             if (endpoints.size() > 1) {
                 logger.warn("Server returned {} endpoints; query() consumes only the first. "
                         + "Use queryWithParams() (ArrowReader) to consume all endpoints.", endpoints.size());
