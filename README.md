@@ -137,6 +137,33 @@ SpiceClient client = SpiceClient.builder()
     .build();
 ```
 
+### Connection Pooling and HikariCP
+
+`SpiceClient` is thread-safe and multiplexes concurrent queries over shared HTTP/2 connections — use **one client instance per application** and share it across threads. It does not need an external connection pool; for high concurrency, size the built-in pool with `withChannelCount(n)`.
+
+Applications that want JDBC semantics (ORMs, existing [HikariCP](https://github.com/brettwooldridge/HikariCP) infrastructure) can connect to Spice through the [Arrow Flight SQL JDBC driver](https://arrow.apache.org/docs/java/flight_sql_jdbc_driver.html) and pool those connections with HikariCP — this combination is exercised in this repo's test suite:
+
+```java
+HikariConfig config = new HikariConfig();
+config.setJdbcUrl("jdbc:arrow-flight-sql://localhost:50051/?useEncryption=false");
+// For Spice Cloud: jdbc:arrow-flight-sql://flight.spiceai.io:443/?useEncryption=true
+// with setUsername(appId) and setPassword(apiKey) — the same credentials the SDK uses.
+config.setMaximumPoolSize(4);
+// The Flight SQL JDBC driver does not implement Connection.isValid():
+config.setConnectionTestQuery("SELECT 1");
+
+try (HikariDataSource pool = new HikariDataSource(config);
+        Connection conn = pool.getConnection();
+        PreparedStatement ps = conn.prepareStatement("SELECT * FROM taxi_trips WHERE total_amount > ?")) {
+    ps.setDouble(1, 10.0);
+    try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) { /* ... */ }
+    }
+}
+```
+
+Requires `org.apache.arrow:flight-sql-jdbc-driver` (or `flight-sql-jdbc-core`) and `com.zaxxer:HikariCP` on your classpath. Keep the pool small — each JDBC connection opens its own Flight channel. Prefer the native `SpiceClient` where possible: it streams Arrow data without JDBC row conversion and is significantly faster for analytical results.
+
 ### Parameterized Queries (Recommended)
 
 The SDK supports parameterized queries using Arrow Flight SQL prepared statements, which is the recommended approach for queries with user input to prevent SQL injection. Prepared statements are cached and reused across repeated executions of the same SQL, and run on the same tuned connection as regular queries (DNS re-resolution, keep-alive, mTLS):

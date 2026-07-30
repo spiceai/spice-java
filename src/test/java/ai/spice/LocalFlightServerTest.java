@@ -124,7 +124,7 @@ public class LocalFlightServerTest extends TestCase {
     public void testPlainQueryConsumesOnlyFirstEndpoint() throws Exception {
         server.endpointCount = 3;
         try (FlightStream stream = client.query("SELECT * FROM test")) {
-            assertEquals(server.batchesPerEndpoint * server.rowsPerBatch, countRows(stream));
+            assertEquals((long) server.batchesPerEndpoint * server.rowsPerBatch, countRows(stream));
         }
         assertEquals(1, server.doGetCalls.get());
     }

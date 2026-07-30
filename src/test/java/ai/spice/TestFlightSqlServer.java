@@ -231,6 +231,12 @@ final class TestFlightSqlServer implements AutoCloseable {
             FlightSql.ActionCreatePreparedStatementResult result = FlightSql.ActionCreatePreparedStatementResult
                     .newBuilder()
                     .setPreparedStatementHandle(ByteString.copyFromUtf8(handle))
+                    // The dataset schema tells clients this statement is a query.
+                    // JDBC (Avatica) clients treat an empty dataset schema as an
+                    // UPDATE and would route execution to DoPut(...Update).
+                    .setDatasetSchema(ByteString.copyFrom(RESULT_SCHEMA.serializeAsMessage()))
+                    .setParameterSchema(ByteString.copyFrom(parameterSchemaFor(request.getQuery())
+                            .serializeAsMessage()))
                     .build();
             listener.onNext(new Result(Any.pack(result).toByteArray()));
             listener.onCompleted();
@@ -297,10 +303,7 @@ final class TestFlightSqlServer implements AutoCloseable {
         @Override
         public void getStreamPreparedStatement(FlightSql.CommandPreparedStatementQuery command,
                 CallContext context, ServerStreamListener listener) {
-            String handleAndIndex = command.getPreparedStatementHandle().toStringUtf8();
-            int separator = handleAndIndex.lastIndexOf('#');
-            int endpointIndex = Integer.parseInt(handleAndIndex.substring(separator + 1));
-            serveData(endpointIndex, listener);
+            serveData(parseEndpointIndex(command.getPreparedStatementHandle().toStringUtf8()), listener);
         }
 
         @Override
@@ -318,9 +321,42 @@ final class TestFlightSqlServer implements AutoCloseable {
         @Override
         public void getStreamStatement(FlightSql.TicketStatementQuery ticket,
                 CallContext context, ServerStreamListener listener) {
-            String handle = ticket.getStatementHandle().toStringUtf8();
-            int endpointIndex = Integer.parseInt(handle.substring(handle.lastIndexOf('#') + 1));
-            serveData(endpointIndex, listener);
+            serveData(parseEndpointIndex(ticket.getStatementHandle().toStringUtf8()), listener);
+        }
+    }
+
+    /**
+     * Advertises one nullable BIGINT parameter per JDBC-style '?' placeholder.
+     * JDBC clients build their bind roots from this schema; the native SDK uses
+     * $N placeholders (no '?') and constructs its own parameter roots, so it
+     * receives an empty schema here — matching real servers' optionality.
+     */
+    private static Schema parameterSchemaFor(String query) {
+        List<Field> fields = new ArrayList<>();
+        for (int i = 0; i < query.length(); i++) {
+            if (query.charAt(i) == '?') {
+                fields.add(Field.nullable("$" + (fields.size() + 1), new ArrowType.Int(64, true)));
+            }
+        }
+        return new Schema(fields);
+    }
+
+    /**
+     * Extracts the endpoint index from a "handle#index" ticket, converting any
+     * malformed input into a protocol-appropriate INVALID_ARGUMENT instead of
+     * an uncaught NumberFormatException.
+     */
+    private static int parseEndpointIndex(String handle) {
+        int separator = handle.lastIndexOf('#');
+        if (separator < 0 || separator == handle.length() - 1) {
+            throw CallStatus.INVALID_ARGUMENT
+                    .withDescription("malformed ticket handle: " + handle).toRuntimeException();
+        }
+        try {
+            return Integer.parseInt(handle.substring(separator + 1));
+        } catch (NumberFormatException e) {
+            throw CallStatus.INVALID_ARGUMENT
+                    .withDescription("malformed ticket handle: " + handle).toRuntimeException();
         }
     }
 }
