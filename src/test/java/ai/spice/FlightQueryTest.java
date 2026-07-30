@@ -42,25 +42,24 @@ public class FlightQueryTest
             return;
         }
 
-        try {
-            SpiceClient spiceClient = SpiceClient.builder()
-                    .withApiKey(apiKey) // https://spice.ai/spiceai/quickstart
-                    .withHttpAddress(new URI("https://data.spiceai.io"))
-                    .withFlightAddress(new URI("https://flight.spiceai.io:443"))
-                    .build();
+        try (SpiceClient spiceClient = SpiceClient.builder()
+                .withApiKey(apiKey) // https://spice.ai/spiceai/quickstart
+                .withHttpAddress(new URI("https://data.spiceai.io"))
+                .withFlightAddress(new URI("https://flight.spiceai.io:443"))
+                .build()) {
 
             String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 10;";
-            FlightStream res = spiceClient.query(sql);
-
             int totalRows = 0;
             int columnCount = 0;
 
-            while (res.next()) {
-                VectorSchemaRoot root = res.getRoot();
-                if (totalRows == 0) {
-                    columnCount = root.getFieldVectors().size();
+            try (FlightStream res = spiceClient.query(sql)) {
+                while (res.next()) {
+                    VectorSchemaRoot root = res.getRoot();
+                    if (totalRows == 0) {
+                        columnCount = root.getFieldVectors().size();
+                    }
+                    totalRows += root.getRowCount();
                 }
-                totalRows += root.getRowCount();
             }
 
             assertEquals("Expected column count does not match", 3, columnCount);
@@ -77,24 +76,23 @@ public class FlightQueryTest
     }
 
     public void testQuerySpiceOSS() throws ExecutionException, InterruptedException {
-        try {
-            // One retry: resilient availability detection without paying full backoff when absent
-            SpiceClient spiceClient = SpiceClient.builder()
-                    .withMaxRetries(1)
-                    .build();
+        // One retry: resilient availability detection without paying full backoff when absent
+        try (SpiceClient spiceClient = SpiceClient.builder()
+                .withMaxRetries(1)
+                .build()) {
 
             String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 10;";
-            FlightStream res = spiceClient.query(sql);
-
             int totalRows = 0;
             int columnCount = 0;
 
-            while (res.next()) {
-                VectorSchemaRoot root = res.getRoot();
-                if (totalRows == 0) {
-                    columnCount = root.getFieldVectors().size();
+            try (FlightStream res = spiceClient.query(sql)) {
+                while (res.next()) {
+                    VectorSchemaRoot root = res.getRoot();
+                    if (totalRows == 0) {
+                        columnCount = root.getFieldVectors().size();
+                    }
+                    totalRows += root.getRowCount();
                 }
-                totalRows += root.getRowCount();
             }
 
             assertEquals("Expected column count does not match", 3, columnCount);
@@ -111,9 +109,8 @@ public class FlightQueryTest
     }
 
     public void testRefreshSpiceOSS() throws ExecutionException, InterruptedException {
-        try {
-            SpiceClient spiceClient = SpiceClient.builder()
-                    .build();
+        try (SpiceClient spiceClient = SpiceClient.builder()
+                .build()) {
 
             spiceClient.refreshDataset("taxi_trips");
 
@@ -135,10 +132,9 @@ public class FlightQueryTest
     }
 
     public void testRefreshWithOptionsSpiceOSS() throws ExecutionException, InterruptedException {
-        try {
+        try (SpiceClient spiceClient = SpiceClient.builder()
+                .build()) {
             String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 20;";
-            SpiceClient spiceClient = SpiceClient.builder()
-                    .build();
 
             // A previous run of this test leaves the accelerated table at 10 rows
             // (refreshes are asynchronous and the refresh_sql persists in the
@@ -151,17 +147,28 @@ public class FlightQueryTest
 
             assertEquals("Expected row count does not match", 20, countRows(spiceClient, sql));
 
-            RefreshOptions opts = new RefreshOptions().withRefreshSql("SELECT * FROM taxi_trips limit 10")
-                    .withRefreshJitterMax("1s");
+            try {
+                RefreshOptions opts = new RefreshOptions().withRefreshSql("SELECT * FROM taxi_trips limit 10")
+                        .withRefreshJitterMax("1s");
 
-            spiceClient.refreshDataset("taxi_trips", opts);
+                spiceClient.refreshDataset("taxi_trips", opts);
 
-            // Refreshes are asynchronous: poll until the shrunk dataset is visible
-            // instead of relying on a fixed sleep.
-            assertEquals("Expected row count does not match", 10, waitForRowCount(spiceClient, sql, 10));
-
-            // Leave the dataset restored for other tests and later runs (async).
-            spiceClient.refreshDataset("taxi_trips");
+                // Refreshes are asynchronous: poll until the shrunk dataset is visible
+                // instead of relying on a fixed sleep.
+                assertEquals("Expected row count does not match", 10, waitForRowCount(spiceClient, sql, 10));
+            } finally {
+                // Always restore the full dataset and wait for it to land, so
+                // subsequent tests and reruns see the standard state even when
+                // the assertions above fail. Best-effort: a restore failure must
+                // not mask the primary test failure.
+                try {
+                    spiceClient.refreshDataset("taxi_trips");
+                    waitForRowCount(spiceClient, sql, 20);
+                } catch (Exception restoreFailure) {
+                    System.err.println("Warning: failed to restore taxi_trips after refresh test: "
+                            + restoreFailure.getMessage());
+                }
+            }
         } catch (Exception e) {
             // Skip if table not found, connection unavailable, or acceleration not ready
             String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";

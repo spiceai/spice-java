@@ -48,8 +48,8 @@ public class TpchIntegrationTest extends TestCase {
     private SpiceClient client;
     private boolean tpchAvailable = true;
 
-    // Availability is probed once for the whole class (with retries disabled)
-    // so a missing local runtime doesn't cost retry backoff per test method.
+    // Availability is probed once for the whole class (with a single retry)
+    // so a missing local runtime doesn't cost full retry backoff per test method.
     private static volatile Boolean tpchAvailableCached;
 
     @Override
