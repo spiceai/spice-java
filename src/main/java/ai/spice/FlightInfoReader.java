@@ -78,7 +78,7 @@ final class FlightInfoReader extends ArrowReader {
                 this.schema = currentStream.getSchema();
             }
             ensureInitialized();
-        } catch (Exception e) {
+        } catch (IOException | RuntimeException e) {
             closeStreamQuietly(e);
             throw e;
         }
