@@ -115,6 +115,10 @@ import com.github.rholder.retry.StopStrategies;
 import com.github.rholder.retry.WaitStrategies;
 import com.google.common.base.Strings;
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonSyntaxException;
 
 import org.apache.arrow.flight.sql.FlightSqlClient;
 import org.slf4j.Logger;
@@ -1259,6 +1263,204 @@ public class SpiceClient implements AutoCloseable {
                             " to " + vector.getClass().getSimpleName(),
                     e);
         }
+    }
+
+    /**
+     * Checks whether the Spice runtime is healthy by calling {@code /health}.
+     *
+     * <p>
+     * This is an unauthenticated liveness probe: it reports that the runtime is
+     * up, not that it is finished loading. Use {@link #isReady()} before issuing
+     * queries.
+     *
+     * <p>
+     * Returns false rather than throwing when the runtime is unreachable, so it
+     * can be polled directly in a loop.
+     *
+     * @return true if the runtime reports healthy
+     */
+    public boolean isHealthy() {
+        return probe("/health", "ok", false);
+    }
+
+    /**
+     * Checks whether the Spice runtime is ready to accept queries by calling
+     * {@code /v1/ready}.
+     *
+     * <p>
+     * The runtime becomes ready once its datasets have loaded, so this returns
+     * false for a period after {@link #isHealthy()} first returns true. When an
+     * API key is configured it is sent, which Spice.ai Cloud requires.
+     *
+     * <p>
+     * Returns false rather than throwing when the runtime is unreachable, so it
+     * can be polled directly in a loop.
+     *
+     * @return true if the runtime reports ready
+     */
+    public boolean isReady() {
+        return probe("/v1/ready", "ready", true);
+    }
+
+    /**
+     * Sends a GET to a runtime probe endpoint and reports whether it succeeded.
+     *
+     * @param path         the endpoint path
+     * @param expectedBody the token the body must contain
+     * @param authenticate whether to send the API key, when one is configured
+     * @return true if the runtime returned 200 with the expected body
+     */
+    private boolean probe(String path, String expectedBody, boolean authenticate) {
+        try {
+            HttpRequest request = buildProbeRequest(this.httpAddress, path,
+                    authenticate ? this.apiKey : null);
+
+            HttpResponse<String> response = httpClient.send(request,
+                    HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                logger.debug("Probe {} returned status {}", path, response.statusCode());
+                return false;
+            }
+
+            // Compare the whole trimmed body, not a substring: "not ready"
+            // contains "ready", so a substring test reports a loading runtime as
+            // ready. These endpoints return a single token.
+            String body = response.body();
+            return body != null && body.trim().equalsIgnoreCase(expectedBody);
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            logger.debug("Probe {} interrupted", path);
+            return false;
+        } catch (Exception err) {
+            logger.debug("Probe {} failed: {}", path, err.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Builds a GET request against a runtime endpoint.
+     *
+     * @param httpAddress the runtime's HTTP address
+     * @param path        the endpoint path
+     * @param apiKey      the API key to send, or null to send none
+     * @return the request
+     * @throws URISyntaxException if the resulting URI is malformed
+     */
+    static HttpRequest buildProbeRequest(URI httpAddress, String path, String apiKey)
+            throws URISyntaxException {
+        // Resolve rather than concatenate: a base address with a trailing slash
+        // would otherwise produce "http://host:8090//v1/ready".
+        URI uri = httpAddress.resolve(path.startsWith("/") ? path : "/" + path);
+
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(uri)
+                .header("X-Spice-User-Agent", Config.getUserAgent())
+                .GET();
+
+        if (!Strings.isNullOrEmpty(apiKey)) {
+            builder = builder.header("X-API-Key", apiKey);
+        }
+
+        return builder.build();
+    }
+
+    /**
+     * Returns the status of each runtime connection by calling
+     * {@code /v1/status}.
+     *
+     * <p>
+     * The runtime reports one {@link ConnectionDetails} per connection —
+     * {@code http}, {@code flight}, {@code metrics}, and
+     * {@code opentelemetry} — naming which component is not ready and where it is
+     * bound. That makes it strictly more informative than the boolean
+     * {@link #isReady()}.
+     *
+     * @return the status of each runtime connection
+     * @throws ExecutionException if the runtime is unreachable or returns an
+     *                            unexpected response
+     */
+    public List<ConnectionDetails> runtimeStatus() throws ExecutionException {
+        logger.debug("Fetching runtime status");
+        try {
+            HttpRequest request = buildProbeRequest(this.httpAddress, "/v1/status", this.apiKey);
+
+            HttpResponse<String> response = httpClient.send(request,
+                    HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                logger.error("Runtime status failed - statusCode={}, response={}", response.statusCode(),
+                        response.body());
+                throw new ExecutionException(
+                        String.format("Failed to fetch runtime status. Status Code: %d, Response: %s",
+                                response.statusCode(),
+                                response.body()),
+                        null);
+            }
+
+            return parseRuntimeStatus(response.body());
+        } catch (ExecutionException e) {
+            // no need to wrap ExecutionException
+            throw e;
+        } catch (ConnectException err) {
+            logger.error("Cannot connect to Spice runtime at {}: {}", this.httpAddress, err.getMessage());
+            throw new ExecutionException(
+                    String.format("The Spice runtime is unavailable at %s. Is it running?", this.httpAddress), err);
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            throw new ExecutionException("Interrupted while fetching runtime status", err);
+        } catch (Exception err) {
+            logger.error("Runtime status failed: {}", err.getMessage());
+            throw new ExecutionException("Failed to fetch runtime status due to error: " + err.toString(), err);
+        }
+    }
+
+    /**
+     * Parses the {@code /v1/status} response body.
+     *
+     * @param body the JSON array the runtime returned
+     * @return the parsed connection details
+     * @throws ExecutionException if the body is not a JSON array
+     */
+    static List<ConnectionDetails> parseRuntimeStatus(String body) throws ExecutionException {
+        JsonElement root;
+        try {
+            root = JsonParser.parseString(body == null ? "" : body);
+        } catch (JsonSyntaxException err) {
+            throw new ExecutionException("The runtime returned a malformed status response", err);
+        }
+
+        if (root == null || !root.isJsonArray()) {
+            throw new ExecutionException("The runtime returned an unexpected status response", null);
+        }
+
+        List<ConnectionDetails> details = new ArrayList<>();
+        for (JsonElement element : root.getAsJsonArray()) {
+            if (!element.isJsonObject()) {
+                continue;
+            }
+            JsonObject object = element.getAsJsonObject();
+            details.add(new ConnectionDetails(
+                    optionalString(object, "name"),
+                    optionalString(object, "endpoint"),
+                    optionalString(object, "status")));
+        }
+        return details;
+    }
+
+    /**
+     * Reads a string member, tolerating absent or null members.
+     *
+     * @param object the object to read from
+     * @param member the member name
+     * @return the string value, or null when absent
+     */
+    private static String optionalString(JsonObject object, String member) {
+        JsonElement element = object.get(member);
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+            return null;
+        }
+        return element.getAsString();
     }
 
     /**
