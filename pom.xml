@@ -4,7 +4,7 @@
     <groupId>ai.spice</groupId>
     <artifactId>spiceai</artifactId>
     <packaging>jar</packaging>
-    <version>0.6.0</version>
+    <version>0.7.0</version>
     <name>Java Spice SDK</name>
     <url>https://github.com/spiceai/spice-java/</url>
     <description>Spice provides a unified SQL query interface and portable runtime to locally materialize, accelerate, and query datasets from any database, data warehouse, or data lake.</description>
@@ -31,25 +31,41 @@
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
+        <!-- Netty 4.1.x line: grpc-netty 1.79.0 is built and tested against Netty 4.1.
+             Do NOT bump to the 4.2.x line (netty-all 4.2 previously forced an unsupported
+             gRPC/Netty combination onto the classpath). -->
+        <netty.version>4.1.130.Final</netty.version>
+        <grpc.version>1.79.0</grpc.version>
         <!-- Placeholder for JDK-version-specific JVM flags (e.g. sun.misc.Unsafe access).
              Set via -DextraArgLine="..." on the Maven command line. -->
         <extraArgLine></extraArgLine>
     </properties>
+    <dependencyManagement>
+        <dependencies>
+            <!-- Align every Netty module on a single CVE-patched 4.1.x version supported
+                 by gRPC, without pulling the entire netty-all aggregate onto the classpath. -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>${netty.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Keep all io.grpc modules converged on the version the SDK is tested with. -->
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-bom</artifactId>
+                <version>${grpc.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
     <dependencies>
         <dependency>
             <groupId>org.apache.arrow</groupId>
             <artifactId>flight-sql</artifactId>
             <version>19.0.0</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.arrow.adbc</groupId>
-            <artifactId>adbc-driver-flight-sql</artifactId>
-            <version>0.23.0</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.arrow.adbc</groupId>
-            <artifactId>adbc-core</artifactId>
-            <version>0.23.0</version>
         </dependency>
         <dependency>
             <groupId>com.google.code.gson</groupId>
@@ -61,10 +77,33 @@
             <artifactId>guava-retrying</artifactId>
             <version>2.0.0</version>
         </dependency>
+        <!-- PEM certificate/key parsing for mTLS (previously an undeclared
+             transitive dependency via the removed ADBC driver). -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>1.80</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>1.80</version>
+        </dependency>
+        <!-- Native epoll transport for Linux: lets gRPC/Netty use epoll instead of NIO
+             for lower-latency, lower-allocation socket I/O on Linux servers. -->
         <dependency>
             <groupId>io.netty</groupId>
-            <artifactId>netty-all</artifactId>
-            <version>4.2.12.Final</version>
+            <artifactId>netty-transport-native-epoll</artifactId>
+            <version>${netty.version}</version>
+            <classifier>linux-x86_64</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-native-epoll</artifactId>
+            <version>${netty.version}</version>
+            <classifier>linux-aarch_64</classifier>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
@@ -81,6 +120,21 @@
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
             <version>4.13.2</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- HikariCP interop verification: users who need JDBC pooling connect to
+             Spice through the Arrow Flight SQL JDBC driver; these tests prove the
+             combination works against the same Netty/gRPC stack this SDK ships. -->
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+            <version>5.1.0</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.arrow</groupId>
+            <artifactId>flight-sql-jdbc-core</artifactId>
+            <version>19.0.0</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

@@ -48,22 +48,30 @@ public class TpchIntegrationTest extends TestCase {
     private SpiceClient client;
     private boolean tpchAvailable = true;
 
+    // Availability is probed once for the whole class (with retries disabled)
+    // so a missing local runtime doesn't cost retry backoff per test method.
+    private static volatile Boolean tpchAvailableCached;
+
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-        try {
+        if (tpchAvailableCached == null) {
+            synchronized (TpchIntegrationTest.class) {
+                if (tpchAvailableCached == null) {
+                    try (SpiceClient probe = SpiceClient.builder().withMaxRetries(0).build();
+                            FlightStream stream = probe.query("SELECT c_custkey FROM tpch.customer LIMIT 1")) {
+                        stream.next();
+                        tpchAvailableCached = Boolean.TRUE;
+                    } catch (Exception e) {
+                        // TPC-H tables not available (either no server or no TPC-H data)
+                        tpchAvailableCached = Boolean.FALSE;
+                    }
+                }
+            }
+        }
+        tpchAvailable = tpchAvailableCached;
+        if (tpchAvailable) {
             client = SpiceClient.builder().build();
-            // Check if TPC-H tables are available by querying tpch.customer
-            try (FlightStream stream = client.query("SELECT c_custkey FROM tpch.customer LIMIT 1")) {
-                stream.next();
-            }
-        } catch (Exception e) {
-            // TPC-H tables not available (either no server or no TPC-H data)
-            tpchAvailable = false;
-            if (client != null) {
-                try { client.close(); } catch (Exception ex) {}
-                client = null;
-            }
         }
     }
 

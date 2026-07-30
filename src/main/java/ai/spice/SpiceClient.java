@@ -22,6 +22,7 @@ SOFTWARE.
 
 package ai.spice;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.ConnectException;
 import java.net.URI;
@@ -34,32 +35,31 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 
-import org.apache.arrow.adbc.core.AdbcConnection;
-import org.apache.arrow.adbc.core.AdbcDatabase;
-import org.apache.arrow.adbc.core.AdbcDriver;
-import org.apache.arrow.adbc.core.AdbcException;
-import org.apache.arrow.adbc.core.AdbcStatement;
-import org.apache.arrow.adbc.core.AdbcStatusCode;
-import org.apache.arrow.adbc.driver.flightsql.FlightSqlDriver;
+import org.apache.arrow.flight.CallOption;
+import org.apache.arrow.flight.CallOptions;
 import org.apache.arrow.flight.CallStatus;
 import org.apache.arrow.flight.FlightClient;
 import org.apache.arrow.flight.FlightClientMiddleware;
+import org.apache.arrow.flight.FlightEndpoint;
 import org.apache.arrow.flight.FlightGrpcUtils;
+import org.apache.arrow.flight.FlightInfo;
+import org.apache.arrow.flight.FlightRuntimeException;
+import org.apache.arrow.flight.FlightStatusCode;
 import org.apache.arrow.flight.FlightStream;
-import org.apache.arrow.flight.Location;
 import org.apache.arrow.flight.Ticket;
 import org.apache.arrow.flight.auth2.BasicAuthCredentialWriter;
 import org.apache.arrow.flight.auth2.ClientBearerHeaderHandler;
 import org.apache.arrow.flight.auth2.ClientIncomingAuthHeaderMiddleware;
 import org.apache.arrow.flight.grpc.CredentialCallOption;
-import org.apache.arrow.flight.FlightInfo;
-import org.apache.arrow.flight.FlightRuntimeException;
 
 import io.grpc.ManagedChannel;
 import io.grpc.netty.GrpcSslContexts;
@@ -126,24 +126,37 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Client to execute SQL queries against Spice.ai Cloud and Spice.ai OSS.
- * Supports both regular queries and parameterized queries using ADBC.
+ * Supports both regular queries and parameterized queries using Arrow Flight
+ * SQL prepared statements.
  */
 public class SpiceClient implements AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(SpiceClient.class);
-    
+
     private static final long BYTES_PER_MB = 1024L * 1024L;
-    
+
     // Cached Gson instance for JSON serialization (thread-safe)
     private static final Gson GSON = new Gson();
-    
+
     // Cap for large dataset results and metadata (~2 GiB, max safe signed-int value)
     private static final int MAX_INBOUND_MESSAGE_SIZE = Integer.MAX_VALUE;
     private static final int MAX_INBOUND_METADATA_SIZE = Integer.MAX_VALUE;
 
-    // HttpClient for refresh operations (thread-safe, connection pooling)
-    private final HttpClient httpClient;
-    
+    /** Default number of gRPC channels (HTTP/2 connections) per client. */
+    static final int DEFAULT_CHANNEL_COUNT = 1;
+    /** Default maximum number of idle prepared statements kept for reuse. */
+    static final int DEFAULT_STATEMENT_CACHE_SIZE = 64;
+
+    // Retry backoff: exponential (multiplier * 2^attempt) capped at a maximum,
+    // plus a random jitter so a fleet of clients does not retry in lockstep.
+    // First waits are ~250ms, 500ms, 1s, ... capped at 10s.
+    private static final long RETRY_BACKOFF_MULTIPLIER_MS = 125;
+    private static final long RETRY_BACKOFF_MAX_MS = 10_000;
+    private static final long RETRY_JITTER_MAX_MS = 250;
+
+    private static final Duration HTTP_CONNECT_TIMEOUT = Duration.ofSeconds(15);
+    private static final Duration HTTP_REQUEST_TIMEOUT = Duration.ofSeconds(60);
+
     // Pre-computed parameter field names to avoid string concatenation in hot path
     private static final String[] PARAM_NAMES = new String[64];
     static {
@@ -152,28 +165,45 @@ public class SpiceClient implements AutoCloseable {
         }
     }
 
-    private String appId;
-    private String apiKey;
-    private String userAgent;
-    private URI flightAddress;
-    private URI httpAddress;
-    private int maxRetries;
-    private String tlsClientCertFile;
-    private String tlsClientKeyFile;
-    private String tlsRootCertFile;
-    private FlightSqlClient flightClient;
-    private CredentialCallOption authCallOptions = null;
-    private BufferAllocator allocator;
-    private volatile boolean closed = false;
-    
-    // Cached retryers (immutable, thread-safe)
-    private Retryer<ArrowReader> adbcRetryer;
-    private Retryer<FlightStream> flightRetryer;
+    private final String appId;
+    private final String apiKey;
+    private final String userAgent;
+    private final URI flightAddress;
+    private final URI httpAddress;
+    private final int maxRetries;
+    private final int channelCount;
+    private final Duration queryTimeout;
+    private final String tlsClientCertFile;
+    private final String tlsClientKeyFile;
+    private final String tlsRootCertFile;
+    private final BufferAllocator allocator;
+    private final PreparedStatementCache statementCache;
+    private final AtomicInteger channelSelector = new AtomicInteger();
 
-    // ADBC resources for parameterized queries
-    private volatile boolean adbcInitialized = false;
-    private AdbcDatabase adbcDatabase;
-    private AdbcConnection adbcConnection;
+    /**
+     * The active connection generation. Volatile so the query hot path can
+     * snapshot it without locking; rebuilt under the client monitor by
+     * {@link #reset()}, lazy rebuild, and UNAUTHENTICATED recovery.
+     */
+    private volatile FlightChannel[] channels;
+
+    /**
+     * Channels replaced by {@link #reset()} or an auth rebuild whose transport
+     * has been gracefully shut down but whose Flight client (and buffer
+     * allocator) cannot be closed yet because RPCs or result streams may still
+     * be in flight on them. Swept once the transport reports terminated.
+     * Guarded by the client monitor.
+     */
+    private final List<FlightChannel> retiredChannels = new ArrayList<>();
+    private volatile boolean closed = false;
+
+    // HttpClient for refresh operations, created lazily on first use so clients
+    // that never call refreshDataset() don't pay for its selector thread.
+    private volatile HttpClient httpClient;
+
+    // Cached retryers (immutable, thread-safe)
+    private Retryer<FlightStream> flightRetryer;
+    private Retryer<ArrowReader> readerRetryer;
 
     /**
      * Returns a new instance of SpiceClientBuilder
@@ -187,7 +217,7 @@ public class SpiceClient implements AutoCloseable {
 
     /**
      * Constructs a new SpiceClient instance with the specified parameters
-     * 
+     *
      * @param appId         the application ID used to identify the client
      *                      application
      * @param apiKey        the API key used for authentication with Spice.ai
@@ -196,7 +226,7 @@ public class SpiceClient implements AutoCloseable {
      *                      Spice.ai
      *                      services
      * @param httpAddress   the URI of the Spice.ai runtime HTTP address
-     * 
+     *
      * @param maxRetries    the maximum number of connection retries for the
      *                      client
      * @param userAgent     the user agent string
@@ -210,11 +240,20 @@ public class SpiceClient implements AutoCloseable {
 
     public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries,
             String userAgent, long memoryLimitMB, String tlsClientCertFile, String tlsClientKeyFile) {
-        this(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB, tlsClientCertFile, tlsClientKeyFile, null);
+        this(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB, tlsClientCertFile,
+                tlsClientKeyFile, null);
     }
 
     public SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries,
-            String userAgent, long memoryLimitMB, String tlsClientCertFile, String tlsClientKeyFile, String tlsRootCertFile) {
+            String userAgent, long memoryLimitMB, String tlsClientCertFile, String tlsClientKeyFile,
+            String tlsRootCertFile) {
+        this(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB, tlsClientCertFile,
+                tlsClientKeyFile, tlsRootCertFile, DEFAULT_CHANNEL_COUNT, null, DEFAULT_STATEMENT_CACHE_SIZE);
+    }
+
+    SpiceClient(String appId, String apiKey, URI flightAddress, URI httpAddress, int maxRetries,
+            String userAgent, long memoryLimitMB, String tlsClientCertFile, String tlsClientKeyFile,
+            String tlsRootCertFile, int channelCount, Duration queryTimeout, int statementCacheSize) {
         this.appId = appId;
         this.apiKey = apiKey;
         this.maxRetries = maxRetries;
@@ -223,6 +262,9 @@ public class SpiceClient implements AutoCloseable {
         this.tlsClientCertFile = tlsClientCertFile;
         this.tlsClientKeyFile = tlsClientKeyFile;
         this.tlsRootCertFile = tlsRootCertFile;
+        this.channelCount = channelCount;
+        this.queryTimeout = queryTimeout;
+        this.statementCache = new PreparedStatementCache(statementCacheSize);
 
         // Arrow Flight requires URI to be grpc protocol, convert http/https for
         // convinience
@@ -241,22 +283,9 @@ public class SpiceClient implements AutoCloseable {
                 : memoryLimitMB * BYTES_PER_MB;
         this.allocator = new RootAllocator(memoryLimitBytes);
 
-        // Build the HTTP client with optional mTLS support
-        HttpClient.Builder httpBuilder = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(15));
-        if (this.tlsRootCertFile != null || (this.tlsClientCertFile != null && this.tlsClientKeyFile != null)) {
-            try {
-                javax.net.ssl.SSLContext sslContext = buildSslContext();
-                httpBuilder.sslContext(sslContext);
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to configure TLS for HTTP client", e);
-            }
-        }
-        this.httpClient = httpBuilder.build();
-
         try {
-            // Build the Flight client (channel + auth handshake)
-            buildFlightClient();
+            // Build the Flight channels (gRPC channel + auth handshake each)
+            buildFlightChannels();
 
             // Initialize cached retryers (immutable, built once)
             initRetryers();
@@ -269,20 +298,164 @@ public class SpiceClient implements AutoCloseable {
             throw e;
         }
 
-        logger.debug("SpiceClient initialized - flightAddress={}, appId={}", this.flightAddress, this.appId);
+        logger.debug("SpiceClient initialized - flightAddress={}, appId={}, channels={}",
+                this.flightAddress, this.appId, this.channelCount);
     }
-    
+
     /**
-     * Builds or rebuilds the Flight client, including the gRPC channel and auth handshake.
-     * This method is called during construction and after {@link #reset()}.
+     * A single gRPC connection to the Flight endpoint together with its
+     * per-connection auth token and pre-computed call options.
+     */
+    private static final class FlightChannel {
+        /** The underlying transport, retained for graceful retirement. */
+        final ManagedChannel grpcChannel;
+        final FlightSqlClient client;
+        /** Options for control-plane RPCs (GetFlightInfo, prepare, DoPut): auth + optional timeout. */
+        final CallOption[] callOptions;
+        /** Options for DoGet streams: auth only — a deadline would kill long-running result streams. */
+        final CallOption[] streamOptions;
+
+        FlightChannel(ManagedChannel grpcChannel, FlightSqlClient client, CallOption[] callOptions,
+                CallOption[] streamOptions) {
+            this.grpcChannel = grpcChannel;
+            this.client = client;
+            this.callOptions = callOptions;
+            this.streamOptions = streamOptions;
+        }
+    }
+
+    /**
+     * A server-side prepared statement bound to the channel that created it and
+     * tagged with the connection generation it belongs to.
+     */
+    private static final class CachedStatement {
+        final FlightSqlClient.PreparedStatement statement;
+        final FlightChannel channel;
+        final Object generation;
+
+        CachedStatement(FlightSqlClient.PreparedStatement statement, FlightChannel channel, Object generation) {
+            this.statement = statement;
+            this.channel = channel;
+            this.generation = generation;
+        }
+    }
+
+    /**
+     * Bounded cache of idle prepared statements keyed by SQL text. Reusing a
+     * prepared statement saves the CreatePreparedStatement and
+     * ClosePreparedStatement round trips on every repeated query.
      *
-     * <p>The gRPC channel is configured with:</p>
+     * <p>All methods are cheap map operations under the cache monitor — no RPC
+     * is ever performed while holding the lock. Statements from a previous
+     * connection generation are rejected on {@link #give} and drained by
+     * {@link #swapGeneration} when the transport is rebuilt.</p>
+     */
+    private static final class PreparedStatementCache {
+        private final int maxIdleStatements;
+        private final HashMap<String, ArrayDeque<CachedStatement>> idleBySql = new HashMap<>();
+        private int idleCount;
+        private Object generation;
+
+        PreparedStatementCache(int maxIdleStatements) {
+            this.maxIdleStatements = maxIdleStatements;
+        }
+
+        synchronized CachedStatement borrow(String sql) {
+            ArrayDeque<CachedStatement> deque = idleBySql.get(sql);
+            if (deque == null) {
+                return null;
+            }
+            CachedStatement statement = deque.poll();
+            if (statement != null) {
+                idleCount--;
+                if (deque.isEmpty()) {
+                    idleBySql.remove(sql);
+                }
+            }
+            return statement;
+        }
+
+        /**
+         * Offers a statement back for reuse. Returns false when the statement
+         * must be closed by the caller instead (cache full, disabled, or the
+         * statement belongs to a previous connection generation).
+         */
+        synchronized boolean give(String sql, CachedStatement statement) {
+            if (statement.generation != generation || idleCount >= maxIdleStatements) {
+                return false;
+            }
+            idleBySql.computeIfAbsent(sql, k -> new ArrayDeque<>(2)).push(statement);
+            idleCount++;
+            return true;
+        }
+
+        /**
+         * Starts a new connection generation, returning all drained statements
+         * for the caller to close outside the lock.
+         */
+        synchronized List<CachedStatement> swapGeneration(Object newGeneration) {
+            this.generation = newGeneration;
+            if (idleCount == 0) {
+                return Collections.emptyList();
+            }
+            List<CachedStatement> drained = new ArrayList<>(idleCount);
+            for (ArrayDeque<CachedStatement> deque : idleBySql.values()) {
+                drained.addAll(deque);
+            }
+            idleBySql.clear();
+            idleCount = 0;
+            return drained;
+        }
+    }
+
+    /**
+     * A view over a parameter root whose close() is a no-op.
+     * {@link FlightSqlClient.PreparedStatement#clearParameters()} closes the
+     * root it was given; passing this wrapper keeps ownership of the real root
+     * (and its buffers) with the SDK so it can be closed exactly once.
+     */
+    private static final class NonOwningRoot extends VectorSchemaRoot {
+        NonOwningRoot(VectorSchemaRoot delegate) {
+            super(delegate.getSchema(), delegate.getFieldVectors(), delegate.getRowCount());
+        }
+
+        @Override
+        public void close() {
+            // The delegate owns the vectors; SpiceClient closes it.
+        }
+    }
+
+    /**
+     * Builds (or rebuilds) all Flight channels, including the gRPC channels and
+     * auth handshakes. Called during construction, after {@link #reset()}, and
+     * on UNAUTHENTICATED recovery.
+     *
+     * <p>Each gRPC channel is configured with:</p>
      * <ul>
      *   <li>{@code dns:///} target scheme for periodic DNS re-resolution behind load balancers</li>
      *   <li>HTTP/2 keep-alive (30s interval, 10s timeout) to detect dead connections quickly</li>
      * </ul>
      */
-    private synchronized void buildFlightClient() {
+    private synchronized void buildFlightChannels() {
+        FlightChannel[] newChannels = new FlightChannel[channelCount];
+        try {
+            for (int i = 0; i < channelCount; i++) {
+                newChannels[i] = buildFlightChannel();
+            }
+        } catch (RuntimeException | Error e) {
+            for (FlightChannel channel : newChannels) {
+                if (channel != null) {
+                    closeChannelQuietly(channel, e);
+                }
+            }
+            throw e;
+        }
+        this.channels = newChannels;
+        // Any cached prepared statements belong to the previous connections.
+        closeStatementsQuietly(statementCache.swapGeneration(newChannels));
+    }
+
+    private FlightChannel buildFlightChannel() {
         // Build a gRPC channel using forTarget() with the "dns:///" scheme so that
         // gRPC's DnsNameResolver periodically re-resolves the hostname. This is critical
         // for long-lived clients connecting to load-balanced endpoints (e.g. AWS ALBs)
@@ -332,39 +505,50 @@ public class SpiceClient implements AutoCloseable {
         ManagedChannel channel = channelBuilder.build();
 
         try {
+            CredentialCallOption auth = null;
+            FlightClient client;
             if (Strings.isNullOrEmpty(apiKey)) {
-                FlightClient client = FlightGrpcUtils.createFlightClient(allocator, channel);
-                this.flightClient = new FlightSqlClient(client);
-                logger.debug("Flight client built (unauthenticated) - target={}", target);
-                return;
-            }
-
-            // prepare additional headers to insert into Flight requests
-            Map<String, String> headers = new HashMap<>();
-            String uaString;
-            if (Strings.isNullOrEmpty(userAgent)) {
-                uaString = Config.getUserAgent();
+                client = FlightGrpcUtils.createFlightClient(allocator, channel);
+                logger.debug("Flight channel built (unauthenticated) - target={}", target);
             } else {
-                // Prepend the user-supplied user agent string with the Spice.ai user agent
-                uaString = userAgent + " " + Config.getUserAgent();
+                // prepare additional headers to insert into Flight requests
+                Map<String, String> headers = new HashMap<>();
+                String uaString;
+                if (Strings.isNullOrEmpty(userAgent)) {
+                    uaString = Config.getUserAgent();
+                } else {
+                    // Prepend the user-supplied user agent string with the Spice.ai user agent
+                    uaString = userAgent + " " + Config.getUserAgent();
+                }
+                headers.put("User-Agent", uaString);
+
+                final ClientIncomingAuthHeaderMiddleware.Factory authFactory =
+                        new ClientIncomingAuthHeaderMiddleware.Factory(new ClientBearerHeaderHandler());
+
+                // Combine auth and custom header middleware into a single factory
+                final HeaderAuthMiddlewareFactory combinedFactory = new HeaderAuthMiddlewareFactory(authFactory,
+                        headers);
+
+                List<FlightClientMiddleware.Factory> middleware = new ArrayList<>();
+                middleware.add(combinedFactory);
+
+                client = FlightGrpcUtils.createFlightClient(allocator, channel, middleware);
+                client.handshake(new CredentialCallOption(new BasicAuthCredentialWriter(this.appId, this.apiKey)));
+                auth = authFactory.getCredentialCallOption();
+                logger.debug("Flight channel built (authenticated) - target={}, appId={}", target, this.appId);
             }
-            headers.put("User-Agent", uaString);
 
-            final ClientIncomingAuthHeaderMiddleware.Factory authFactory = new ClientIncomingAuthHeaderMiddleware.Factory(
-                    new ClientBearerHeaderHandler());
+            List<CallOption> options = new ArrayList<>(2);
+            if (auth != null) {
+                options.add(auth);
+            }
+            CallOption[] streamOptions = options.toArray(new CallOption[0]);
+            if (queryTimeout != null) {
+                options.add(CallOptions.timeout(queryTimeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS));
+            }
+            CallOption[] callOptions = options.toArray(new CallOption[0]);
 
-            // Combine auth and custom header middleware into a single factory
-            final HeaderAuthMiddlewareFactory combinedFactory = new HeaderAuthMiddlewareFactory(authFactory, headers);
-
-            List<FlightClientMiddleware.Factory> middleware = new ArrayList<>();
-            middleware.add(combinedFactory);
-
-            final FlightClient client = FlightGrpcUtils.createFlightClient(allocator, channel, middleware);
-            client.handshake(new CredentialCallOption(new BasicAuthCredentialWriter(this.appId, this.apiKey)));
-            this.authCallOptions = authFactory.getCredentialCallOption();
-            this.flightClient = new FlightSqlClient(client);
-
-            logger.debug("Flight client built (authenticated) - target={}, appId={}", target, this.appId);
+            return new FlightChannel(channel, new FlightSqlClient(client), callOptions, streamOptions);
         } catch (Exception e) {
             // Ensure the channel is shut down if client creation or handshake fails
             // to avoid leaking threads and file descriptors on repeated rebuild attempts.
@@ -378,21 +562,36 @@ public class SpiceClient implements AutoCloseable {
     }
 
     /**
-     * Ensures the Flight client is connected, rebuilding it if necessary
-     * (e.g. after a {@link #reset()} call).
+     * Returns the current channels, lazily rebuilding them if necessary
+     * (e.g. after a failed rebuild). Lock-free on the hot path.
      */
-    private synchronized void ensureFlightClient() {
-        if (this.closed) {
-            throw new IllegalStateException("SpiceClient is closed");
+    private FlightChannel[] currentChannels() {
+        FlightChannel[] snapshot = this.channels;
+        if (snapshot != null) {
+            return snapshot;
         }
-        if (this.flightClient == null) {
-            buildFlightClient();
+        synchronized (this) {
+            if (closed) {
+                throw new IllegalStateException("SpiceClient is closed");
+            }
+            if (this.channels == null) {
+                buildFlightChannels();
+            }
+            return this.channels;
         }
     }
 
+    private FlightChannel selectChannel(FlightChannel[] snapshot) {
+        if (snapshot.length == 1) {
+            return snapshot[0];
+        }
+        return snapshot[Math.floorMod(channelSelector.getAndIncrement(), snapshot.length)];
+    }
+
     /**
-     * Resets the underlying gRPC transport by closing the current Flight client and ADBC connections,
-     * then immediately establishes a fresh connection with a new DNS lookup and TLS handshake.
+     * Resets the underlying gRPC transport by closing the current Flight channels and
+     * cached prepared statements, then immediately establishes fresh connections with
+     * a new DNS lookup and TLS handshake.
      * This ensures the next {@link #query(String)} or {@link #queryWithParams(String, Object...)}
      * call does not incur connection setup overhead.
      *
@@ -422,28 +621,46 @@ public class SpiceClient implements AutoCloseable {
         }
         logger.info("Resetting SpiceClient transport");
 
-        // Close ADBC resources (they maintain a separate Flight connection)
-        closeADBC();
+        // Close cached prepared statements while their channels still accept
+        // RPCs, then retire the channels (graceful shutdown; deferred close so
+        // concurrent in-flight queries can finish on them).
+        closeStatementsQuietly(statementCache.swapGeneration(null));
+        retireChannelsLocked();
+        sweepRetiredChannels(false);
 
-        // Close Flight client (this also shuts down the underlying gRPC channel)
-        if (this.flightClient != null) {
-            try {
-                this.flightClient.close();
-            } catch (Exception e) {
-                logger.warn("Error closing Flight client during reset: {}", e.getMessage());
-            }
-            this.flightClient = null;
-        }
-        this.authCallOptions = null;
-
-        // Eagerly re-establish the connection so the next query has no setup overhead
-        buildFlightClient();
+        // Eagerly re-establish the connections so the next query has no setup overhead
+        buildFlightChannels();
 
         logger.info("SpiceClient transport reset and reconnected.");
     }
 
     /**
-     * Initializes the cached retryer instances.
+     * Rebuilds the transport once when the server reports UNAUTHENTICATED —
+     * typically an expired handshake bearer token on a long-lived client. The
+     * generation check makes concurrent failures trigger a single rebuild, and
+     * the retryer then re-attempts the query on the fresh connection.
+     */
+    private void maybeRebuildOnAuthError(FlightRuntimeException e, FlightChannel[] expected) {
+        if (e.status().code() != FlightStatusCode.UNAUTHENTICATED || Strings.isNullOrEmpty(apiKey)) {
+            return;
+        }
+        synchronized (this) {
+            if (closed || this.channels != expected) {
+                return;
+            }
+            logger.info("Received UNAUTHENTICATED from server; re-authenticating with a fresh handshake");
+            closeStatementsQuietly(statementCache.swapGeneration(null));
+            retireChannelsLocked();
+            sweepRetiredChannels(false);
+            try {
+                buildFlightChannels();
+            } catch (RuntimeException rebuildError) {
+                // Leave channels null: the next query attempt rebuilds lazily.
+                logger.warn("Re-authentication failed: {}", rebuildError.getMessage());
+            }
+        }
+    }
+
     /**
      * Builds an SSLContext configured with the custom CA and/or client certificate
      * for the JDK HTTP client.
@@ -467,15 +684,17 @@ public class SpiceClient implements AutoCloseable {
 
             // Parse the PEM private key using BouncyCastle
             java.security.PrivateKey privateKey;
-            try (java.io.FileReader keyReader = new java.io.FileReader(this.tlsClientKeyFile, java.nio.charset.StandardCharsets.UTF_8);
-                 org.bouncycastle.openssl.PEMParser pemParser = new org.bouncycastle.openssl.PEMParser(keyReader)) {
+            try (java.io.FileReader keyReader = new java.io.FileReader(this.tlsClientKeyFile,
+                    java.nio.charset.StandardCharsets.UTF_8);
+                    org.bouncycastle.openssl.PEMParser pemParser = new org.bouncycastle.openssl.PEMParser(keyReader)) {
                 Object parsed = pemParser.readObject();
                 org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter converter =
                         new org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter().setProvider("BC");
                 if (parsed instanceof org.bouncycastle.asn1.pkcs.PrivateKeyInfo) {
                     privateKey = converter.getPrivateKey((org.bouncycastle.asn1.pkcs.PrivateKeyInfo) parsed);
                 } else if (parsed instanceof org.bouncycastle.openssl.PEMKeyPair) {
-                    privateKey = converter.getPrivateKey(((org.bouncycastle.openssl.PEMKeyPair) parsed).getPrivateKeyInfo());
+                    privateKey = converter
+                            .getPrivateKey(((org.bouncycastle.openssl.PEMKeyPair) parsed).getPrivateKeyInfo());
                 } else {
                     throw new IllegalArgumentException("Unsupported PEM key format in " + this.tlsClientKeyFile);
                 }
@@ -485,7 +704,7 @@ public class SpiceClient implements AutoCloseable {
             java.security.KeyStore keyStore = java.security.KeyStore.getInstance("PKCS12");
             keyStore.load(null, null);
             keyStore.setKeyEntry("client", privateKey, new char[0],
-                    new java.security.cert.Certificate[]{clientCert});
+                    new java.security.cert.Certificate[] { clientCert });
             javax.net.ssl.KeyManagerFactory kmf = javax.net.ssl.KeyManagerFactory.getInstance(
                     javax.net.ssl.KeyManagerFactory.getDefaultAlgorithm());
             kmf.init(keyStore, new char[0]);
@@ -494,7 +713,8 @@ public class SpiceClient implements AutoCloseable {
 
         if (this.tlsRootCertFile != null) {
             java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X.509");
-            java.security.KeyStore trustStore = java.security.KeyStore.getInstance(java.security.KeyStore.getDefaultType());
+            java.security.KeyStore trustStore = java.security.KeyStore
+                    .getInstance(java.security.KeyStore.getDefaultType());
             trustStore.load(null, null);
             try (java.io.FileInputStream fis = new java.io.FileInputStream(this.tlsRootCertFile)) {
                 int i = 0;
@@ -514,39 +734,49 @@ public class SpiceClient implements AutoCloseable {
     }
 
     /**
+     * Returns the HTTP client, creating it on first use.
+     */
+    private HttpClient httpClient() {
+        HttpClient client = this.httpClient;
+        if (client != null) {
+            return client;
+        }
+        synchronized (this) {
+            if (this.httpClient == null) {
+                HttpClient.Builder httpBuilder = HttpClient.newBuilder()
+                        .connectTimeout(HTTP_CONNECT_TIMEOUT);
+                if (this.tlsRootCertFile != null
+                        || (this.tlsClientCertFile != null && this.tlsClientKeyFile != null)) {
+                    try {
+                        httpBuilder.sslContext(buildSslContext());
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to configure TLS for HTTP client", e);
+                    }
+                }
+                this.httpClient = httpBuilder.build();
+            }
+            return this.httpClient;
+        }
+    }
+
+    /**
+     * Initializes the cached retryer instances.
      * Called from constructor and must be called after maxRetries is set.
      */
     private void initRetryers() {
-        this.adbcRetryer = RetryerBuilder.<ArrowReader>newBuilder()
-                .retryIfException(throwable -> {
-                    if (throwable instanceof AdbcException) {
-                        AdbcStatusCode status = ((AdbcException) throwable).getStatus();
-                        switch (status) {
-                            case IO:       // maps to gRPC UNAVAILABLE
-                            case UNKNOWN:
-                            case TIMEOUT:  // maps to gRPC DEADLINE_EXCEEDED
-                            case INTERNAL:
-                                return true;
-                            default:
-                                return false;
-                        }
-                    }
-                    return false;
-                })
-                .withWaitStrategy(WaitStrategies.fibonacciWait())
-                .withStopStrategy(StopStrategies.stopAfterAttempt(this.maxRetries + 1))
-                .build();
-                
-        this.flightRetryer = RetryerBuilder.<FlightStream>newBuilder()
-                .retryIfException(throwable -> {
-                    if (throwable instanceof FlightRuntimeException) {
-                        FlightRuntimeException flightException = (FlightRuntimeException) throwable;
-                        CallStatus status = flightException.status();
-                        return shouldRetry(status);
-                    }
-                    return false;
-                })
-                .withWaitStrategy(WaitStrategies.fibonacciWait())
+        this.flightRetryer = buildRetryer();
+        this.readerRetryer = buildRetryer();
+    }
+
+    private <T> Retryer<T> buildRetryer() {
+        return RetryerBuilder.<T>newBuilder()
+                .retryIfException(throwable -> throwable instanceof FlightRuntimeException
+                        && shouldRetry(((FlightRuntimeException) throwable).status()))
+                .withWaitStrategy(WaitStrategies.join(
+                        WaitStrategies.exponentialWait(RETRY_BACKOFF_MULTIPLIER_MS, RETRY_BACKOFF_MAX_MS,
+                                java.util.concurrent.TimeUnit.MILLISECONDS),
+                        WaitStrategies.randomWait(1, java.util.concurrent.TimeUnit.MILLISECONDS,
+                                RETRY_JITTER_MAX_MS, java.util.concurrent.TimeUnit.MILLISECONDS)))
                 .withStopStrategy(StopStrategies.stopAfterAttempt(this.maxRetries + 1))
                 .build();
     }
@@ -562,6 +792,9 @@ public class SpiceClient implements AutoCloseable {
         if (Strings.isNullOrEmpty(sql)) {
             throw new IllegalArgumentException("No SQL query provided");
         }
+        if (closed) {
+            throw new IllegalStateException("Cannot query with a closed SpiceClient");
+        }
 
         logger.debug("Executing query: {}", sql);
         try {
@@ -576,11 +809,17 @@ public class SpiceClient implements AutoCloseable {
     }
 
     /**
-     * Executes a parameterized SQL query using ADBC.
+     * Executes a parameterized SQL query using Arrow Flight SQL prepared
+     * statements.
      * This is the recommended method for queries with user input to prevent SQL
      * injection.
      * Parameters should use positional placeholders ($1, $2, etc.) in the SQL
      * query.
+     *
+     * <p>
+     * Prepared statements are cached and reused for repeated executions of the
+     * same SQL, saving the create/close round trips on every call.
+     * </p>
      *
      * <p>
      * Parameters can be:
@@ -595,13 +834,13 @@ public class SpiceClient implements AutoCloseable {
      * <p>
      * Example usage:
      * </p>
-     * 
+     *
      * <pre>
      * // With automatic type inference
      * ArrowReader reader = client.queryWithParams(
      *     "SELECT * FROM table WHERE id = $1 AND name = $2",
      *     123, "test");
-     * 
+     *
      * // With explicit types
      * ArrowReader reader = client.queryWithParams(
      *     "SELECT * FROM table WHERE id = $1 AND amount = $2",
@@ -625,180 +864,172 @@ public class SpiceClient implements AutoCloseable {
 
         logger.debug("Executing parameterized query with {} parameters: {}", params != null ? params.length : 0, sql);
         try {
-            initADBCIfNeeded();
-            ArrowReader result = queryWithParamsInternal(sql, params);
+            ArrowReader result = readerRetryer.call(() -> executeParameterizedQuery(sql, params));
             logger.debug("Parameterized query executed successfully");
             return result;
-        } catch (AdbcException e) {
-            logger.error("Parameterized query failed: {}", e.getMessage());
-            throw new ExecutionException("Failed to execute parameterized query: " + e.getMessage(), e);
         } catch (RetryException e) {
             Throwable err = e.getLastFailedAttempt().getExceptionCause();
-            logger.error("Parameterized query failed after {} attempts: {}", e.getNumberOfFailedAttempts(), err.getMessage());
+            logger.error("Parameterized query failed after {} attempts: {}", e.getNumberOfFailedAttempts(),
+                    err.getMessage());
             throw new ExecutionException("Failed to execute parameterized query due to error: " + err.toString(), err);
         }
     }
 
     /**
-     * Initializes the ADBC connection if not already initialized.
-     * Uses double-checked locking to avoid monitor contention on the hot path.
+     * Executes a single attempt of a parameterized query: bind + execute on a
+     * cached prepared statement when available, falling back to a freshly
+     * prepared statement when the cached one fails (e.g. the server restarted
+     * and no longer knows the handle).
      */
-    private void initADBCIfNeeded() throws AdbcException {
-        if (adbcInitialized) {
-            return;
-        }
-        synchronized (this) {
-            if (adbcInitialized) {
-                return;
-            }
-
-        logger.debug("Initializing ADBC connection");
-        
-        // Format the URI for ADBC FlightSQL driver
-        String uri = this.flightAddress.toString();
-
-        // Convert grpc+tls:// to grpc+tls:// format expected by ADBC
-        // and grpc+tcp:// to grpc:// format
-        if (uri.startsWith("grpc+tcp://")) {
-            uri = "grpc://" + uri.substring("grpc+tcp://".length());
-        }
-
-        // Build driver options
-        Map<String, Object> options = new HashMap<>();
-        AdbcDriver.PARAM_URI.set(options, uri);
-
-        // Add authentication if available
-        if (!Strings.isNullOrEmpty(apiKey)) {
-            AdbcDriver.PARAM_USERNAME.set(options, appId);
-            AdbcDriver.PARAM_PASSWORD.set(options, apiKey);
-        }
-
-        // Add user agent header
-        String uaString;
-        if (Strings.isNullOrEmpty(userAgent)) {
-            uaString = Config.getUserAgent();
-        } else {
-            uaString = userAgent + " " + Config.getUserAgent();
-        }
-        options.put("adbc.flight.sql.rpc.call_header.user-agent", uaString);
-
-        // Create the driver and database using local temporaries.
-        // Only assign to fields after both open+connect succeed to avoid
-        // leaking partially created resources on failure.
-        FlightSqlDriver driver = new FlightSqlDriver(allocator);
-        AdbcDatabase db = driver.open(options);
-        AdbcConnection conn;
-        try {
-            conn = db.connect();
-        } catch (AdbcException e) {
-            try { db.close(); } catch (Exception suppressed) { e.addSuppressed(suppressed); }
-            throw e;
-        }
-        adbcDatabase = db;
-        adbcConnection = conn;
-        adbcInitialized = true;
-        
-        logger.debug("ADBC connection established - uri={}", uri);
-        }
-    }
-
-    /**
-     * Closes the ADBC resources.
-     */
-    private void closeADBC() {
-        adbcInitialized = false;
-        if (adbcConnection != null) {
-            try {
-                adbcConnection.close();
-                logger.debug("ADBC connection closed");
-            } catch (Exception e) {
-                logger.warn("Error closing ADBC connection: {}", e.getMessage());
-            }
-            adbcConnection = null;
-        }
-        if (adbcDatabase != null) {
-            try {
-                adbcDatabase.close();
-                logger.debug("ADBC database closed");
-            } catch (Exception e) {
-                logger.warn("Error closing ADBC database: {}", e.getMessage());
-            }
-            adbcDatabase = null;
-        }
-    }
-
-    /**
-     * Internal implementation of parameterized query execution.
-     */
-    private ArrowReader queryWithParamsInternal(String sql, Object... params)
-            throws AdbcException, RetryException, ExecutionException {
-        return adbcRetryer.call(() -> executeParameterizedQuery(sql, params));
-    }
-
-    /**
-     * Executes a single parameterized query using ADBC prepare/bind/execute
-     * pattern.
-     */
-    private ArrowReader executeParameterizedQuery(String sql, Object... params) throws AdbcException {
-        AdbcStatement stmt = adbcConnection.createStatement();
-        VectorSchemaRoot paramRoot = null;
-
-        try {
-            // Set the query
-            stmt.setSqlQuery(sql);
-
-            // Prepare the statement
-            stmt.prepare();
-
-            // Bind parameters if provided
-            if (params != null && params.length > 0) {
-                paramRoot = createParameterRoot(params);
-                stmt.bind(paramRoot);
-            }
-
-            // Execute the query - at this point parameters have been serialized
-            AdbcStatement.QueryResult result = stmt.executeQuery();
-            ArrowReader reader = result.getReader();
-            
-            // Now we can safely close the parameter root since it has been sent to server
-            if (paramRoot != null) {
-                paramRoot.close();
-                paramRoot = null;
-            }
-
-            // Close the statement eagerly — the reader holds its own Flight stream
-            // and no longer needs the statement. This frees server-side resources
-            // immediately rather than waiting for slow consumers to close the reader.
-            try {
-                stmt.close();
-            } catch (Exception closeEx) {
-                logger.warn("Error closing ADBC statement: {}", closeEx.getMessage());
-            }
-            
-            return reader;
-        } catch (AdbcException e) {
-            // Clean up on error
-            if (paramRoot != null) {
+    private ArrowReader executeParameterizedQuery(String sql, Object[] params) throws IOException {
+        final FlightChannel[] snapshot = currentChannels();
+        try (VectorSchemaRoot paramRoot = (params != null && params.length > 0) ? createParameterRoot(params)
+                : null) {
+            CachedStatement statement = statementCache.borrow(sql);
+            FlightInfo info = null;
+            if (statement != null) {
                 try {
-                    paramRoot.close();
-                } catch (Exception closeEx) {
-                    // Ignore close exception
+                    info = bindAndExecute(statement, paramRoot);
+                } catch (FlightRuntimeException e) {
+                    logger.debug("Cached prepared statement failed ({}); preparing a fresh statement",
+                            e.status().code());
+                    closeStatementQuietly(statement);
+                    statement = null;
                 }
             }
-            try {
-                stmt.close();
-            } catch (Exception closeEx) {
-                // Ignore close exception
+            if (info == null) {
+                FlightChannel channel = selectChannel(snapshot);
+                try {
+                    statement = new CachedStatement(channel.client.prepare(sql, channel.callOptions), channel,
+                            snapshot);
+                    info = bindAndExecute(statement, paramRoot);
+                } catch (FlightRuntimeException e) {
+                    if (statement != null) {
+                        closeStatementQuietly(statement);
+                    }
+                    maybeRebuildOnAuthError(e, snapshot);
+                    throw e;
+                }
             }
-            throw e;
+
+            // The statement is healthy: return it to the cache before opening the
+            // result stream so other threads can reuse it immediately.
+            //
+            // Safe because only bind+execute mutates statement state — and the
+            // cache hands a statement to at most one thread at a time for that
+            // phase. The result stream is served by the self-contained ticket
+            // minted by execute(), not by live statement state: the previous
+            // implementation closed the server-side statement outright at this
+            // point (reader still open) and reads were unaffected, so a later
+            // re-bind on the same handle cannot alter an already-issued ticket.
+            if (!statementCache.give(sql, statement)) {
+                closeStatementQuietly(statement);
+            }
+
+            try {
+                return new FlightInfoReader(allocator, statement.channel.client, statement.channel.streamOptions,
+                        info);
+            } catch (FlightRuntimeException e) {
+                maybeRebuildOnAuthError(e, snapshot);
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Binds the parameters (if any) and executes the prepared statement.
+     * The parameter root is passed as a non-owning view: the statement's
+     * clearParameters() closes only the view, never the caller's root.
+     */
+    private FlightInfo bindAndExecute(CachedStatement statement, VectorSchemaRoot paramRoot) {
+        if (paramRoot != null) {
+            statement.statement.setParameters(new NonOwningRoot(paramRoot));
+        }
+        try {
+            return statement.statement.execute(statement.channel.callOptions);
+        } finally {
+            try {
+                statement.statement.clearParameters();
+            } catch (RuntimeException ignored) {
+                // Best-effort: closing the non-owning view cannot fail meaningfully.
+            }
+        }
+    }
+
+    private void closeStatementQuietly(CachedStatement statement) {
+        try {
+            statement.statement.close();
+        } catch (Exception e) {
+            logger.debug("Error closing prepared statement: {}", e.getMessage());
+        }
+    }
+
+    private void closeStatementsQuietly(List<CachedStatement> statements) {
+        for (CachedStatement statement : statements) {
+            closeStatementQuietly(statement);
+        }
+    }
+
+    private void closeChannelQuietly(FlightChannel channel, Throwable pending) {
+        try {
+            channel.client.close();
+        } catch (Exception e) {
+            if (pending != null) {
+                pending.addSuppressed(e);
+            } else {
+                logger.warn("Error closing Flight channel: {}", e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Retires the current channels: the gRPC transports are shut down
+     * gracefully — in-flight RPCs and open result streams complete, new RPCs
+     * fail with a retryable UNAVAILABLE — but the Flight clients (and their
+     * buffer allocators) stay open until {@link #sweepRetiredChannels} sees
+     * the transport terminate. Closing them inline would tear the allocator
+     * out from under concurrent queries mid-RPC.
+     * Must be called while holding the client monitor.
+     */
+    private void retireChannelsLocked() {
+        FlightChannel[] snapshot = this.channels;
+        if (snapshot == null) {
+            return;
+        }
+        for (FlightChannel channel : snapshot) {
+            try {
+                channel.grpcChannel.shutdown();
+            } catch (RuntimeException e) {
+                logger.warn("Error shutting down Flight transport: {}", e.getMessage());
+            }
+            retiredChannels.add(channel);
+        }
+        this.channels = null;
+    }
+
+    /**
+     * Closes retired channels whose transport has fully terminated (no RPCs or
+     * streams remain). With {@code force}, closes them regardless — used by
+     * {@link #close()}, where interrupting anything still in flight is the
+     * documented behavior.
+     * Must be called while holding the client monitor.
+     */
+    private void sweepRetiredChannels(boolean force) {
+        for (java.util.Iterator<FlightChannel> it = retiredChannels.iterator(); it.hasNext();) {
+            FlightChannel channel = it.next();
+            if (force || channel.grpcChannel.isTerminated()) {
+                closeChannelQuietly(channel, null);
+                it.remove();
+            }
         }
     }
 
     /**
      * Creates a VectorSchemaRoot containing the parameter values.
      * The caller is responsible for closing the returned root.
+     * Package-private for tests.
      */
-    private VectorSchemaRoot createParameterRoot(Object... params) throws AdbcException {
+    VectorSchemaRoot createParameterRoot(Object... params) {
         final int numParams = params.length;
 
         // Single pass: build schema fields directly (no intermediate arrays)
@@ -817,8 +1048,13 @@ public class SpiceClient implements AutoCloseable {
         }
         Schema schema = new Schema(fields);
 
-        // Create a VectorSchemaRoot and populate it
+        // Create a VectorSchemaRoot sized for a single row of parameters —
+        // without setInitialCapacity(1), allocateNew() reserves Arrow's default
+        // ~3970-slot buffers per vector for what is always a 1-row binding.
         VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator);
+        for (FieldVector vector : root.getFieldVectors()) {
+            vector.setInitialCapacity(1);
+        }
         root.allocateNew();
 
         // Populate vectors — read value from original params to avoid intermediate arrays
@@ -831,9 +1067,9 @@ public class SpiceClient implements AutoCloseable {
         }
 
         root.setRowCount(1);
-        
-        logger.debug("Created parameter root: rowCount={}, schema={}", 
-            root.getRowCount(), root.getSchema());
+
+        logger.debug("Created parameter root: rowCount={}, schema={}",
+                root.getRowCount(), root.getSchema());
 
         return root;
     }
@@ -933,8 +1169,7 @@ public class SpiceClient implements AutoCloseable {
      * Uses setSafe methods to properly handle validity buffer and auto-expansion.
      */
     @SuppressWarnings("deprecation")
-    private void appendValueToVector(FieldVector vector, int index, Object value, ArrowType type)
-            throws AdbcException {
+    private void appendValueToVector(FieldVector vector, int index, Object value, ArrowType type) {
         if (value == null) {
             vector.setNull(index);
             return;
@@ -1073,14 +1308,13 @@ public class SpiceClient implements AutoCloseable {
                 BigDecimal bd = (BigDecimal) value;
                 decVector.setSafe(index, bd);
             } else {
-                throw new AdbcException("Unsupported vector type: " + vector.getClass().getName(),
-                        null, AdbcStatusCode.UNKNOWN, null, 0);
+                throw new IllegalArgumentException("Unsupported vector type: " + vector.getClass().getName());
             }
         } catch (ClassCastException e) {
-            throw new AdbcException(
+            throw new IllegalArgumentException(
                     "Cannot convert value of type " + value.getClass().getName() +
                             " to " + vector.getClass().getSimpleName(),
-                    e, AdbcStatusCode.INVALID_ARGUMENT, null, 0);
+                    e);
         }
     }
 
@@ -1134,7 +1368,7 @@ public class SpiceClient implements AutoCloseable {
             HttpRequest request = buildProbeRequest(this.httpAddress, path,
                     authenticate ? this.apiKey : null);
 
-            HttpResponse<String> response = httpClient.send(request,
+            HttpResponse<String> response = httpClient().send(request,
                     HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
@@ -1204,7 +1438,7 @@ public class SpiceClient implements AutoCloseable {
         try {
             HttpRequest request = buildProbeRequest(this.httpAddress, "/v1/status", this.apiKey);
 
-            HttpResponse<String> response = httpClient.send(request,
+            HttpResponse<String> response = httpClient().send(request,
                     HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
@@ -1300,7 +1534,7 @@ public class SpiceClient implements AutoCloseable {
     /**
      * Refreshes an accelerated dataset using the configured dataset acceleration
      * settings
-     * 
+     *
      * @param dataset        the name of the dataset to refresh
      * @param refreshOptions the refresh options to use when refreshing the dataset
      * @throws ExecutionException if there is an error refreshing the dataset
@@ -1314,6 +1548,7 @@ public class SpiceClient implements AutoCloseable {
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(new URI(String.format("%s/v1/datasets/%s/acceleration/refresh", this.httpAddress, dataset)))
+                    .timeout(HTTP_REQUEST_TIMEOUT)
                     .header("Content-Type", "application/json")
                     .header("X-Spice-User-Agent", Config.getUserAgent());
 
@@ -1325,10 +1560,11 @@ public class SpiceClient implements AutoCloseable {
             }
 
             HttpRequest request = builder.build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient().send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 201) {
-                logger.error("Dataset refresh failed - dataset={}, statusCode={}, response={}", dataset, response.statusCode(), response.body());
+                logger.error("Dataset refresh failed - dataset={}, statusCode={}, response={}", dataset,
+                        response.statusCode(), response.body());
                 throw new ExecutionException(
                         String.format("Failed to trigger dataset refresh. Status Code: %d, Response: %s",
                                 response.statusCode(),
@@ -1350,18 +1586,26 @@ public class SpiceClient implements AutoCloseable {
     }
 
     private FlightStream queryInternal(String sql) {
-        // Snapshot the client and auth under the lock, then release it
-        // so concurrent queries can execute RPCs in parallel.
-        final FlightSqlClient client;
-        final CredentialCallOption auth;
-        synchronized (this) {
-            ensureFlightClient();
-            client = this.flightClient;
-            auth = this.authCallOptions;
+        FlightChannel[] snapshot = currentChannels();
+        FlightChannel channel = selectChannel(snapshot);
+        try {
+            FlightInfo flightInfo = channel.client.execute(sql, channel.callOptions);
+            List<FlightEndpoint> endpoints = flightInfo.getEndpoints();
+            if (endpoints.isEmpty()) {
+                throw CallStatus.INTERNAL
+                        .withDescription("Server returned a FlightInfo with no endpoints for the query")
+                        .toRuntimeException();
+            }
+            if (endpoints.size() > 1) {
+                logger.warn("Server returned {} endpoints; query() consumes only the first. "
+                        + "Use queryWithParams() (ArrowReader) to consume all endpoints.", endpoints.size());
+            }
+            Ticket ticket = endpoints.get(0).getTicket();
+            return channel.client.getStream(ticket, channel.streamOptions);
+        } catch (FlightRuntimeException e) {
+            maybeRebuildOnAuthError(e, snapshot);
+            throw e;
         }
-        FlightInfo flightInfo = client.execute(sql, auth);
-        Ticket ticket = flightInfo.getEndpoints().get(0).getTicket();
-        return client.getStream(ticket, auth);
     }
 
     private FlightStream queryInternalWithRetry(String sql) throws ExecutionException, RetryException {
@@ -1375,6 +1619,10 @@ public class SpiceClient implements AutoCloseable {
             case TIMED_OUT:
             case INTERNAL:
                 return true;
+            case UNAUTHENTICATED:
+                // Retried after maybeRebuildOnAuthError() re-handshakes; only
+                // meaningful for authenticated clients.
+                return !Strings.isNullOrEmpty(apiKey);
             default:
                 return false;
         }
@@ -1389,24 +1637,33 @@ public class SpiceClient implements AutoCloseable {
         logger.debug("Closing SpiceClient");
         List<Exception> exceptions = new ArrayList<>();
 
-        // Close ADBC resources first
+        // Close cached prepared statements first (best-effort RPCs that need the
+        // channels to still be open).
         try {
-            closeADBC();
+            closeStatementsQuietly(statementCache.swapGeneration(null));
         } catch (Exception e) {
-            logger.warn("Error during ADBC cleanup: {}", e.getMessage());
+            logger.warn("Error during prepared statement cleanup: {}", e.getMessage());
             exceptions.add(e);
         }
 
-        // Close Flight client
-        if (this.flightClient != null) {
+        // Close Flight channels: current ones and any retired channels whose
+        // in-flight work never finished.
+        FlightChannel[] snapshot = this.channels;
+        this.channels = null;
+        List<FlightChannel> toClose = new ArrayList<>(retiredChannels);
+        retiredChannels.clear();
+        if (snapshot != null) {
+            toClose.addAll(java.util.Arrays.asList(snapshot));
+        }
+        for (FlightChannel channel : toClose) {
             try {
-                this.flightClient.close();
-                logger.debug("Flight client closed");
+                channel.client.close();
             } catch (Exception e) {
-                logger.warn("Error closing Flight client: {}", e.getMessage());
+                logger.warn("Error closing Flight channel: {}", e.getMessage());
                 exceptions.add(e);
             }
         }
+        logger.debug("Flight channels closed");
 
         // Close allocator
         try {
@@ -1427,7 +1684,7 @@ public class SpiceClient implements AutoCloseable {
             logger.error("SpiceClient closed with {} error(s)", exceptions.size());
             throw first;
         }
-        
+
         logger.debug("SpiceClient closed successfully");
     }
 }

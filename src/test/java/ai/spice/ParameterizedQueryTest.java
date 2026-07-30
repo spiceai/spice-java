@@ -82,7 +82,7 @@ public class ParameterizedQueryTest extends TestCase {
      * Test parameterized query with local Spice OSS runtime.
      */
     public void testParameterizedQuerySpiceOSS() throws Exception {
-        try (SpiceClient spiceClient = SpiceClient.builder().build()) {
+        try (SpiceClient spiceClient = SpiceClient.builder().withMaxRetries(0).build()) {
 
             // Test with float parameter on tpch.orders
             String sql = "SELECT o_orderkey, o_totalprice FROM tpch.orders WHERE o_totalprice > $1 ORDER BY o_totalprice LIMIT 5";
@@ -113,7 +113,7 @@ public class ParameterizedQueryTest extends TestCase {
      * Test parameterized query with multiple parameters.
      */
     public void testMultipleParameters() throws Exception {
-        try (SpiceClient spiceClient = SpiceClient.builder().build()) {
+        try (SpiceClient spiceClient = SpiceClient.builder().withMaxRetries(0).build()) {
 
             String sql = "SELECT o_orderkey, o_totalprice FROM tpch.orders WHERE o_totalprice > $1 AND o_custkey > $2 LIMIT 5";
             try (ArrowReader reader = spiceClient.queryWithParams(sql, 5000.0, 100)) {
@@ -140,7 +140,7 @@ public class ParameterizedQueryTest extends TestCase {
      * Test parameterized query with string parameter.
      */
     public void testStringParameter() throws Exception {
-        try (SpiceClient spiceClient = SpiceClient.builder().build()) {
+        try (SpiceClient spiceClient = SpiceClient.builder().withMaxRetries(0).build()) {
 
             // Use c_mktsegment which is a string column in tpch.customer
             String sql = "SELECT c_custkey, c_mktsegment FROM tpch.customer WHERE c_mktsegment = $1 LIMIT 5";
@@ -168,7 +168,7 @@ public class ParameterizedQueryTest extends TestCase {
      * Test parameterized query with explicit Param types.
      */
     public void testExplicitParamTypes() throws Exception {
-        try (SpiceClient spiceClient = SpiceClient.builder().build()) {
+        try (SpiceClient spiceClient = SpiceClient.builder().withMaxRetries(0).build()) {
 
             // Use explicit int64 type on tpch.customer
             String sql = "SELECT c_custkey, c_name, c_nationkey FROM tpch.customer WHERE c_nationkey = $1 LIMIT 5";
@@ -195,7 +195,7 @@ public class ParameterizedQueryTest extends TestCase {
      * Test parameterized query with mixed parameter types.
      */
     public void testMixedParameterTypes() throws Exception {
-        try (SpiceClient spiceClient = SpiceClient.builder().build()) {
+        try (SpiceClient spiceClient = SpiceClient.builder().withMaxRetries(0).build()) {
 
             String sql = "SELECT o_orderkey, o_totalprice FROM tpch.orders WHERE o_totalprice > $1 AND o_orderstatus = $2 LIMIT 5";
             try (ArrowReader reader = spiceClient.queryWithParams(sql,
@@ -290,7 +290,7 @@ public class ParameterizedQueryTest extends TestCase {
      * Test that null SQL throws IllegalArgumentException.
      */
     public void testNullSqlThrows() throws Exception {
-        try (SpiceClient spiceClient = SpiceClient.builder().build()) {
+        try (SpiceClient spiceClient = SpiceClient.builder().withMaxRetries(0).build()) {
             try {
                 spiceClient.queryWithParams(null, 1);
                 fail("Expected IllegalArgumentException");
@@ -310,7 +310,7 @@ public class ParameterizedQueryTest extends TestCase {
      * Test that empty SQL throws IllegalArgumentException.
      */
     public void testEmptySqlThrows() throws Exception {
-        try (SpiceClient spiceClient = SpiceClient.builder().build()) {
+        try (SpiceClient spiceClient = SpiceClient.builder().withMaxRetries(0).build()) {
             try {
                 spiceClient.queryWithParams("", 1);
                 fail("Expected IllegalArgumentException");

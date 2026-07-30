@@ -93,13 +93,21 @@ public class Config {
         return new URI(CLOUD_HTTP_ADDRESS);
     }
 
+    // Computed once: system properties are effectively immutable for the
+    // process lifetime, and this used to be recomputed on every request.
+    private static final String USER_AGENT = computeUserAgent();
+
     /**
      * Returns the Spice SDK user agent for this system, including the package
      * version, system OS, version and arch.
-     * 
+     *
      * @return the Spice SDK user agent string for this system.
      */
     public static String getUserAgent() {
+        return USER_AGENT;
+    }
+
+    private static String computeUserAgent() {
         // change the os arch to match the pattern set in other SDKs
         String osArch = System.getProperty("os.arch");
         if (osArch.equals("amd64")) {
@@ -124,7 +132,7 @@ public class Config {
         }
 
         return "spice-java/" + Version.SPICE_JAVA_VERSION + " (" + osName + "/"
-                + System.getProperty("os.version") + " "
+                + osVersion + " "
                 + osArch + ")";
     }
 }

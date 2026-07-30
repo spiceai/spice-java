@@ -312,6 +312,81 @@ public class SpiceClientBuilderTest extends TestCase {
         client.close();
     }
 
+    // ==================== Channel Count / Timeout / Statement Cache ====================
+
+    public void testWithChannelCountValid() throws Exception {
+        try (SpiceClient client = SpiceClient.builder().withChannelCount(2).build()) {
+            assertNotNull(client);
+        }
+    }
+
+    public void testWithChannelCountInvalid() throws Exception {
+        try {
+            SpiceClient.builder().withChannelCount(0);
+            fail("Expected IllegalArgumentException for channelCount=0");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+        try {
+            SpiceClient.builder().withChannelCount(17);
+            fail("Expected IllegalArgumentException for channelCount=17");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+    }
+
+    public void testWithQueryTimeoutValid() throws Exception {
+        try (SpiceClient client = SpiceClient.builder()
+                .withQueryTimeout(java.time.Duration.ofSeconds(30)).build()) {
+            assertNotNull(client);
+        }
+    }
+
+    public void testWithQueryTimeoutInvalid() throws Exception {
+        try {
+            SpiceClient.builder().withQueryTimeout(null);
+            fail("Expected IllegalArgumentException for null timeout");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+        try {
+            SpiceClient.builder().withQueryTimeout(java.time.Duration.ZERO);
+            fail("Expected IllegalArgumentException for zero timeout");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+        try {
+            SpiceClient.builder().withQueryTimeout(java.time.Duration.ofSeconds(-1));
+            fail("Expected IllegalArgumentException for negative timeout");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+    }
+
+    public void testWithPreparedStatementCacheSizeValid() throws Exception {
+        try (SpiceClient client = SpiceClient.builder().withPreparedStatementCacheSize(0).build()) {
+            assertNotNull(client);
+        }
+        try (SpiceClient client = SpiceClient.builder().withPreparedStatementCacheSize(1024).build()) {
+            assertNotNull(client);
+        }
+    }
+
+    public void testWithPreparedStatementCacheSizeInvalid() throws Exception {
+        try {
+            SpiceClient.builder().withPreparedStatementCacheSize(-1);
+            fail("Expected IllegalArgumentException for negative cache size");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+        try {
+            SpiceClient.builder().withPreparedStatementCacheSize(1025);
+            fail("Expected IllegalArgumentException for oversized cache");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+    }
+
     // ==================== Close/Resource Management Tests ====================
 
     public void testMultipleClose() throws Exception {

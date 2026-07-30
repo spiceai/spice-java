@@ -53,7 +53,7 @@ public class ResetTest extends TestCase {
         if (!serverAvailabilityChecked) {
             synchronized (ResetTest.class) {
                 if (!serverAvailabilityChecked) {
-                    try (SpiceClient probe = SpiceClient.builder().build()) {
+                    try (SpiceClient probe = SpiceClient.builder().withMaxRetries(0).build()) {
                         // Probe with taxi_trips (not SELECT 1) to ensure
                         // the dataset is loaded and ready, not just that
                         // the server is up.
@@ -119,9 +119,10 @@ public class ResetTest extends TestCase {
      * After reset(), the client should have eagerly rebuilt its Flight connection.
      * A query should work without any NullPointerException.
      * If no local server is available, a connection error is expected.
+     * maxRetries=0 keeps the no-server failure path fast (real backoff otherwise).
      */
     public void testQueryAfterResetRebuildsClient() throws Exception {
-        SpiceClient client = SpiceClient.builder().build();
+        SpiceClient client = SpiceClient.builder().withMaxRetries(0).build();
         client.reset();
 
         try {
@@ -145,11 +146,11 @@ public class ResetTest extends TestCase {
     }
 
     /**
-     * After reset(), queryWithParams should work because the Flight client was
-     * eagerly rebuilt (ADBC is still lazily initialized on first parameterized query).
+     * After reset(), queryWithParams should work because the Flight channels were
+     * eagerly rebuilt (prepared statements are re-created on first use).
      */
     public void testQueryWithParamsAfterResetRebuildsClient() throws Exception {
-        SpiceClient client = SpiceClient.builder().build();
+        SpiceClient client = SpiceClient.builder().withMaxRetries(0).build();
         client.reset();
 
         try {
@@ -184,7 +185,7 @@ public class ResetTest extends TestCase {
      * Each reset discards the transport; each query rebuilds it.
      */
     public void testResetQueryResetQueryCycle() throws Exception {
-        SpiceClient client = SpiceClient.builder().build();
+        SpiceClient client = SpiceClient.builder().withMaxRetries(0).build();
 
         for (int i = 0; i < 3; i++) {
             client.reset();
@@ -269,7 +270,7 @@ public class ResetTest extends TestCase {
      * (query may fail with connection errors, but not NPE or IllegalStateException.)
      */
     public void testConcurrentResetAndQuery() throws Exception {
-        final SpiceClient client = SpiceClient.builder().build();
+        final SpiceClient client = SpiceClient.builder().withMaxRetries(0).build();
         final int iterations = 5;
         final CountDownLatch startLatch = new CountDownLatch(1);
         final List<Throwable> unexpectedErrors = new CopyOnWriteArrayList<>();
@@ -508,7 +509,7 @@ public class ResetTest extends TestCase {
             // Reset
             client.reset();
 
-            // Second query (re-initializes both Flight and ADBC)
+            // Second query (rebuilds channels and re-prepares the statement)
             try (ArrowReader reader2 = client.queryWithParams(
                     "SELECT total_amount FROM taxi_trips WHERE total_amount > $1 LIMIT 2",
                     0.0)) {

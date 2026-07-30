@@ -24,6 +24,7 @@ package ai.spice;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.time.Duration;
 
 import com.google.common.base.Strings;
 
@@ -31,6 +32,11 @@ import com.google.common.base.Strings;
  * Builder class for creating instances of SpiceClient.
  */
 public class SpiceClientBuilder {
+
+    /** Maximum number of gRPC channels a single client may open. */
+    private static final int MAX_CHANNEL_COUNT = 16;
+    /** Maximum number of idle prepared statements the cache may hold. */
+    private static final int MAX_STATEMENT_CACHE_SIZE = 1024;
 
     private String appId;
     private String apiKey;
@@ -42,6 +48,9 @@ public class SpiceClientBuilder {
     private String tlsClientCertFile;
     private String tlsClientKeyFile;
     private String tlsRootCertFile;
+    private int channelCount = SpiceClient.DEFAULT_CHANNEL_COUNT;
+    private Duration queryTimeout;
+    private int statementCacheSize = SpiceClient.DEFAULT_STATEMENT_CACHE_SIZE;
 
     /**
      * Constructs a new SpiceClientBuilder instance
@@ -207,6 +216,70 @@ public class SpiceClientBuilder {
     }
 
     /**
+     * Sets the number of gRPC channels (HTTP/2 connections) the client opens to
+     * the Flight endpoint. Queries are distributed round-robin across channels.
+     *
+     * <p>A single HTTP/2 connection multiplexes all concurrent queries and is
+     * limited by the server's MAX_CONCURRENT_STREAMS and the throughput of one
+     * TCP connection. Increase this for highly concurrent workloads with large
+     * result streams. The default of 1 is appropriate for most applications.</p>
+     *
+     * @param channelCount Number of connections, between 1 and 16.
+     * @return The current instance of SpiceClientBuilder for method chaining.
+     */
+    public SpiceClientBuilder withChannelCount(int channelCount) {
+        if (channelCount < 1 || channelCount > MAX_CHANNEL_COUNT) {
+            throw new IllegalArgumentException(
+                    "channelCount must be between 1 and " + MAX_CHANNEL_COUNT + ", got: " + channelCount);
+        }
+        this.channelCount = channelCount;
+        return this;
+    }
+
+    /**
+     * Sets a deadline for query control-plane RPCs: query planning
+     * (GetFlightInfo), statement preparation, and parameter binding. Without a
+     * timeout, a hung server can block the calling thread indefinitely.
+     *
+     * <p>The timeout intentionally does not apply to result streaming (DoGet) —
+     * large results may legitimately stream for longer than any planning
+     * deadline. Dead connections during streaming are detected by HTTP/2
+     * keep-alive instead.</p>
+     *
+     * @param queryTimeout The timeout, must be positive.
+     * @return The current instance of SpiceClientBuilder for method chaining.
+     */
+    public SpiceClientBuilder withQueryTimeout(Duration queryTimeout) {
+        if (queryTimeout == null || queryTimeout.isZero() || queryTimeout.isNegative()) {
+            throw new IllegalArgumentException("queryTimeout must be positive, got: " + queryTimeout);
+        }
+        this.queryTimeout = queryTimeout;
+        return this;
+    }
+
+    /**
+     * Sets the maximum number of idle prepared statements cached for reuse by
+     * {@link SpiceClient#queryWithParams(String, Object...)}.
+     *
+     * <p>Reusing a prepared statement removes the CreatePreparedStatement and
+     * ClosePreparedStatement round trips from every repeated parameterized
+     * query. Set to 0 to disable caching (each query then prepares and closes
+     * its own statement, matching the pre-0.7 behavior).</p>
+     *
+     * @param statementCacheSize Maximum idle statements, between 0 and 1024. Default is 64.
+     * @return The current instance of SpiceClientBuilder for method chaining.
+     */
+    public SpiceClientBuilder withPreparedStatementCacheSize(int statementCacheSize) {
+        if (statementCacheSize < 0 || statementCacheSize > MAX_STATEMENT_CACHE_SIZE) {
+            throw new IllegalArgumentException(
+                    "statementCacheSize must be between 0 and " + MAX_STATEMENT_CACHE_SIZE + ", got: "
+                            + statementCacheSize);
+        }
+        this.statementCacheSize = statementCacheSize;
+        return this;
+    }
+
+    /**
      * Creates SpiceClient with provided parameters.
      *
      * @return The SpiceClient instance
@@ -220,6 +293,7 @@ public class SpiceClientBuilder {
                     "Both tlsClientCertFile and tlsClientKeyFile must be provided together for mTLS. "
                     + (hasCert ? "tlsClientKeyFile is missing." : "tlsClientCertFile is missing."));
         }
-        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB, tlsClientCertFile, tlsClientKeyFile, tlsRootCertFile);
+        return new SpiceClient(appId, apiKey, flightAddress, httpAddress, maxRetries, userAgent, memoryLimitMB,
+                tlsClientCertFile, tlsClientKeyFile, tlsRootCertFile, channelCount, queryTimeout, statementCacheSize);
     }
 }

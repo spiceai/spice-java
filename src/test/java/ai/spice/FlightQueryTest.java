@@ -78,7 +78,9 @@ public class FlightQueryTest
 
     public void testQuerySpiceOSS() throws ExecutionException, InterruptedException {
         try {
+            // maxRetries=0: keep the no-local-server skip path fast under real backoff
             SpiceClient spiceClient = SpiceClient.builder()
+                    .withMaxRetries(0)
                     .build();
 
             String sql = "SELECT tpep_pickup_datetime, total_amount, passenger_count from taxi_trips limit 10;";
