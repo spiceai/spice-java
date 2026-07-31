@@ -78,6 +78,32 @@ public class PerfBenchmarkTest extends TestCase {
                 p50 / 1_000, p95 / 1_000, p99 / 1_000);
     }
 
+    private static long p50Micros(long[] sortedNanos) {
+        return sortedNanos[sortedNanos.length / 2] / 1_000;
+    }
+
+    /**
+     * Appends a data point to the file named by the BENCH_JSON env var, in
+     * github-action-benchmark's "customSmallerIsBetter" format. No-op when the
+     * variable is unset (normal test runs).
+     */
+    private static synchronized void recordBench(String name, String unit, long value) throws Exception {
+        String path = System.getenv("BENCH_JSON");
+        if (path == null || path.isEmpty()) {
+            return;
+        }
+        java.nio.file.Path file = java.nio.file.Path.of(path);
+        com.google.gson.JsonArray entries = java.nio.file.Files.exists(file)
+                ? com.google.gson.JsonParser.parseString(java.nio.file.Files.readString(file)).getAsJsonArray()
+                : new com.google.gson.JsonArray();
+        com.google.gson.JsonObject entry = new com.google.gson.JsonObject();
+        entry.addProperty("name", name);
+        entry.addProperty("unit", unit);
+        entry.addProperty("value", value);
+        entries.add(entry);
+        java.nio.file.Files.writeString(file, entries.toString());
+    }
+
     public void testBenchmarkPlainQuery() throws Exception {
         try (SpiceClient client = SpiceClient.builder().withFlightAddress(server.flightUri()).build()) {
             Callable<?> op = () -> {
@@ -89,6 +115,7 @@ public class PerfBenchmarkTest extends TestCase {
             long getFlightInfoBefore = server.getFlightInfoCalls.get();
             long[] samples = measure(MEASURED_ITERATIONS, op);
             System.out.println("[bench] " + stats("query()", samples));
+            recordBench("query() p50", "us", p50Micros(samples));
 
             // The plain query path is exactly 2 RPCs: GetFlightInfo + DoGet.
             assertEquals(MEASURED_ITERATIONS, server.getFlightInfoCalls.get() - getFlightInfoBefore);
@@ -133,6 +160,8 @@ public class PerfBenchmarkTest extends TestCase {
 
             System.out.println("[bench] " + stats("queryWithParams (cached)", cachedSamples));
             System.out.println("[bench] " + stats("queryWithParams (uncached)", uncachedSamples));
+            recordBench("queryWithParams cached p50", "us", p50Micros(cachedSamples));
+            recordBench("queryWithParams uncached p50", "us", p50Micros(uncachedSamples));
             System.out.printf(
                     "[bench] RPCs per %d queries: cached=%d prepares, uncached=%d prepares + %d closes "
                             + "(2 round trips saved per query on a real network)%n",
@@ -165,6 +194,7 @@ public class PerfBenchmarkTest extends TestCase {
             }
             System.out.printf("[bench] param-root buffer bytes for 100 binds of (long,string,double): %d%n",
                     totalCapacityBytes);
+            recordBench("param-root bytes per 100 binds", "bytes", totalCapacityBytes);
             // Old behavior: >48KB per string vector alone → many MB over 100 binds.
             assertTrue("parameter roots should stay small, used " + totalCapacityBytes + " bytes",
                     totalCapacityBytes < 200_000);

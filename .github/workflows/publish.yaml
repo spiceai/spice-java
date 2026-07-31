@@ -42,8 +42,17 @@ jobs:
       - name: Install Spice (https://install.spiceai.org)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Retried + verified: the installer's release lookup intermittently
+        # fails from runner IPs; a flake here must never break a release.
         run: |
-          curl https://install.spiceai.org | /bin/bash
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL https://install.spiceai.org | /bin/bash && "$HOME/.spice/bin/spice" version; then
+              break
+            fi
+            echo "Spice CLI install failed (attempt $attempt); retrying in $((attempt * 10))s"
+            sleep $((attempt * 10))
+          done
+          "$HOME/.spice/bin/spice" version
           echo "$HOME/.spice/bin" >> $GITHUB_PATH
           $HOME/.spice/bin/spice install
 

@@ -104,7 +104,7 @@ final class TestFlightSqlServer implements AutoCloseable {
 
     /** Starts an unauthenticated server on an ephemeral port. */
     TestFlightSqlServer() throws Exception {
-        this(null, null);
+        this(null, null, null, false);
     }
 
     /**
@@ -113,9 +113,36 @@ final class TestFlightSqlServer implements AutoCloseable {
      * bearer tokens for subsequent calls (mirroring Spice's auth flow).
      */
     TestFlightSqlServer(String expectedUser, String expectedPassword) throws Exception {
+        this(expectedUser, expectedPassword, null, false);
+    }
+
+    /**
+     * Starts a TLS server using the fixture's server certificate. With
+     * requireClientCert, clients must present a certificate signed by the
+     * fixture CA (mutual TLS).
+     */
+    TestFlightSqlServer(TestCerts certs, boolean requireClientCert) throws Exception {
+        this(null, null, certs, requireClientCert);
+    }
+
+    private TestFlightSqlServer(String expectedUser, String expectedPassword,
+            TestCerts certs, boolean requireClientCert) throws Exception {
         this.allocator = new RootAllocator(Long.MAX_VALUE);
-        FlightServer.Builder builder = FlightServer.builder(
-                allocator, Location.forGrpcInsecure("localhost", 0), new Producer());
+        Location location = certs != null
+                ? Location.forGrpcTls("localhost", 0)
+                : Location.forGrpcInsecure("localhost", 0);
+        FlightServer.Builder builder = FlightServer.builder(allocator, location, new Producer());
+        if (certs != null) {
+            // The builder defers reading the streams until build(), so use
+            // in-memory streams rather than files that would be closed by then.
+            builder.useTls(
+                    new java.io.ByteArrayInputStream(java.nio.file.Files.readAllBytes(certs.serverCert)),
+                    new java.io.ByteArrayInputStream(java.nio.file.Files.readAllBytes(certs.serverKey)));
+            if (requireClientCert) {
+                builder.useMTlsClientVerification(
+                        new java.io.ByteArrayInputStream(java.nio.file.Files.readAllBytes(certs.caCert)));
+            }
+        }
         if (expectedUser != null) {
             CallHeaderAuthenticator inner = new GeneratedBearerTokenAuthenticator(
                     new BasicCallHeaderAuthenticator((username, password) -> {

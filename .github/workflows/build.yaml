@@ -47,15 +47,40 @@ jobs:
         if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # The installer resolves the latest release via the GitHub API, which
+        # intermittently fails from runner IPs (empty version -> corrupt
+        # archive). Retry with backoff and verify the binary actually works.
         run: |
-          curl https://install.spiceai.org | /bin/bash
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL https://install.spiceai.org | /bin/bash && "$HOME/.spice/bin/spice" version; then
+              break
+            fi
+            echo "Spice CLI install failed (attempt $attempt); retrying in $((attempt * 10))s"
+            sleep $((attempt * 10))
+          done
+          "$HOME/.spice/bin/spice" version
           echo "$HOME/.spice/bin" >> $GITHUB_PATH
           $HOME/.spice/bin/spice install
 
       - name: install Spice (Windows)
         if: matrix.os == 'windows-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
         run: |
-          curl -L "https://install.spiceai.org/Install.ps1" -o Install.ps1 && PowerShell -ExecutionPolicy Bypass -File ./Install.ps1
+          $ok = $false
+          foreach ($attempt in 1..5) {
+            try {
+              curl.exe -fsSL "https://install.spiceai.org/Install.ps1" -o Install.ps1
+              PowerShell -ExecutionPolicy Bypass -File ./Install.ps1
+              & (Join-Path $HOME ".spice\bin\spice.exe") version
+              if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            } catch {
+              Write-Host "Spice CLI install failed (attempt $attempt): $_"
+            }
+            Start-Sleep -Seconds ($attempt * 10)
+          }
+          if (-not $ok) { throw "Spice CLI install failed after retries" }
 
       - name: add Spice bin to PATH (Windows)
         if: matrix.os == 'windows-latest'
@@ -187,8 +212,19 @@ jobs:
         run: mvn install -DskipTests=true -Dgpg.skip -B -V
 
       - name: Install Spice (https://install.spiceai.org)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Authenticated + retried: the installer's release lookup intermittently
+        # fails from runner IPs without a token (this step caused most CI flakes).
         run: |
-          curl https://install.spiceai.org | /bin/bash
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL https://install.spiceai.org | /bin/bash && "$HOME/.spice/bin/spice" version; then
+              break
+            fi
+            echo "Spice CLI install failed (attempt $attempt); retrying in $((attempt * 10))s"
+            sleep $((attempt * 10))
+          done
+          "$HOME/.spice/bin/spice" version
           echo "$HOME/.spice/bin" >> $GITHUB_PATH
 
       - name: Init and start spice app
@@ -261,6 +297,9 @@ jobs:
       - name: Checkstyle
         run: mvn checkstyle:check -B
 
+      - name: API compatibility (japicmp vs latest release)
+        run: mvn japicmp:cmp -B
+
       - name: Cache OWASP Dependency-Check data
         uses: actions/cache@v4
         with:
@@ -270,11 +309,19 @@ jobs:
             dependency-check-data-${{ runner.os }}-
 
       - name: OWASP Dependency-Check
-        # NVD API is unreliable (429s, timeouts without API key). Don't block CI.
+        # NVD API is unreliable (429s, slow without an API key). The step-level
+        # timeout keeps a slow NVD refresh from hitting the job-level timeout,
+        # which would cancel the whole job and bypass continue-on-error.
         continue-on-error: true
+        timeout-minutes: 20
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: mvn dependency-check:check -B -DnvdApiKey="$NVD_API_KEY"
+        run: |
+          EXTRA=""
+          if [ -n "$NVD_API_KEY" ]; then
+            EXTRA="-DnvdApiKey=$NVD_API_KEY"
+          fi
+          mvn dependency-check:check -B $EXTRA
 
       - name: Upload dependency-check report
         if: always()
@@ -283,3 +330,43 @@ jobs:
           name: dependency-check-report
           path: target/dependency-check-report.html
           retention-days: 30
+
+  e2e-chaos:
+    name: E2E chaos (runtime restart, frozen peer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Oracle)
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: oracle
+          cache: maven
+
+      - name: Build
+        run: mvn install -DskipTests=true -Dgpg.skip -B -V
+
+      - name: Install Spice (https://install.spiceai.org)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL https://install.spiceai.org | /bin/bash && "$HOME/.spice/bin/spice" version; then
+              break
+            fi
+            echo "Spice CLI install failed (attempt $attempt); retrying in $((attempt * 10))s"
+            sleep $((attempt * 10))
+          done
+          "$HOME/.spice/bin/spice" version
+          echo "$HOME/.spice/bin" >> $GITHUB_PATH
+          $HOME/.spice/bin/spice install
+
+      # The chaos tests start, kill, freeze, and restart their own spiced
+      # process (no datasets needed), validating end-to-end that the SDK
+      # survives runtime crashes, restarts, and frozen peers.
+      - name: Run chaos e2e tests
+        env:
+          SPICE_E2E_CHAOS: "1"
+        run: mvn test -B -Dtest=ChaosE2ETest -DfailIfNoTests=true
