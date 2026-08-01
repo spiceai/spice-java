@@ -39,6 +39,14 @@
         <!-- Placeholder for JDK-version-specific JVM flags (e.g. sun.misc.Unsafe access).
              Set via -DextraArgLine="..." on the Maven command line. -->
         <extraArgLine></extraArgLine>
+        <!-- Default for surefire's @{argLine}: normally set by JaCoCo's
+             prepare-agent; this empty default keeps test runs working when
+             JaCoCo is skipped (-Djacoco.skip=true, e.g. benchmarks). -->
+        <argLine></argLine>
+        <!-- The last published release, which the japicmp API-compatibility
+             gate compares against. Bump when releasing; the publish workflow
+             fails if this still equals the version being released. -->
+        <japicmp.oldVersion>0.6.0</japicmp.oldVersion>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -230,6 +238,40 @@
                     <!-- Don't fail the build when the NVD API is unavailable (429, timeouts).
                          The scan will proceed with cached/local data instead. -->
                     <failOnError>false</failOnError>
+                    <!-- With a warm cache (persisted in CI), skip the slow NVD
+                         refresh entirely for a day instead of re-syncing every run. -->
+                    <nvdValidForHours>24</nvdValidForHours>
+                </configuration>
+            </plugin>
+            <!-- P0: API compatibility gate — fail the build on any binary- or
+                 source-incompatible change to the public API vs the last release.
+                 Bump oldVersion as part of each release. -->
+            <plugin>
+                <groupId>com.github.siom79.japicmp</groupId>
+                <artifactId>japicmp-maven-plugin</artifactId>
+                <version>0.23.1</version>
+                <configuration>
+                    <oldVersion>
+                        <dependency>
+                            <groupId>ai.spice</groupId>
+                            <artifactId>spiceai</artifactId>
+                            <version>${japicmp.oldVersion}</version>
+                        </dependency>
+                    </oldVersion>
+                    <parameter>
+                        <onlyModified>true</onlyModified>
+                        <breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>
+                        <breakBuildOnSourceIncompatibleModifications>true</breakBuildOnSourceIncompatibleModifications>
+                        <!-- Examples ship in the jar but are not a compatibility surface. -->
+                        <excludes>
+                            <exclude>ai.spice.example</exclude>
+                        </excludes>
+                        <!-- v0.6.0 internals referenced ADBC, which 0.7.0 removed
+                             from the classpath; those types were never public API. -->
+                        <ignoreMissingClassesByRegularExpressions>
+                            <ignoreMissingClassesByRegularExpression>org\.apache\.arrow\.adbc\..*</ignoreMissingClassesByRegularExpression>
+                        </ignoreMissingClassesByRegularExpressions>
+                    </parameter>
                 </configuration>
             </plugin>
             <!-- P1: Test coverage reporting -->

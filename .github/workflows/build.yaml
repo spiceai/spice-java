@@ -9,6 +9,8 @@ on:
 
 jobs:
   build_multi_os:
+    permissions:
+      contents: read
     name: Build and test ${{matrix.os}}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -43,72 +45,11 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: mvn --% install -DskipTests=true -Dgpg.skip -B -V # tell powershell to stop parsing with --% so it doesn't error with "Unknown lifecycle phase .skip"
 
-      - name: Install Spice (https://install.spiceai.org) (Unix)
-        if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl https://install.spiceai.org | /bin/bash
-          echo "$HOME/.spice/bin" >> $GITHUB_PATH
-          $HOME/.spice/bin/spice install
+      - name: Install Spice
+        uses: ./.github/actions/setup-spice
 
-      - name: install Spice (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          curl -L "https://install.spiceai.org/Install.ps1" -o Install.ps1 && PowerShell -ExecutionPolicy Bypass -File ./Install.ps1
-
-      - name: add Spice bin to PATH (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          Add-Content $env:GITHUB_PATH (Join-Path $HOME ".spice\bin")
-        shell: pwsh
-
-      - name: Init and start spice app (Unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          spice init spice_qs
-          cd spice_qs
-          # Define the dataset inline rather than fetching spiceai/quickstart from
-          # the Spicepod registry, which currently returns a body the CLI cannot
-          # unpack ("Failed to extract Spicepod archive: Could not find EOCD").
-          cat >> spicepod.yaml <<'YAML'
-
-          datasets:
-            - from: s3://spiceai-demo-datasets/taxi_trips/2024/
-              name: taxi_trips
-              description: taxi trips in s3
-              params:
-                file_format: parquet
-              acceleration:
-                enabled: true
-          YAML
-          spiced &> spice.log &
-          # time to initialize added dataset
-          sleep 10
-
-      - name: Init and start spice app (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          spice init spice_qs
-          cd spice_qs
-          # Define the dataset inline rather than fetching spiceai/quickstart from
-          # the Spicepod registry, which currently returns a body the CLI cannot
-          # unpack ("Failed to extract Spicepod archive: Could not find EOCD").
-          @'
-
-          datasets:
-            - from: s3://spiceai-demo-datasets/taxi_trips/2024/
-              name: taxi_trips
-              description: taxi trips in s3
-              params:
-                file_format: parquet
-              acceleration:
-                enabled: true
-          '@ | Add-Content -Path spicepod.yaml
-          Start-Process -FilePath spice run
-          # time to initialize added dataset
-          Start-Sleep -Seconds 10
-        shell: pwsh
+      - name: Init and start spice app
+        uses: ./.github/actions/start-spice-app
 
       - name: Test
         run: mvn test -B
@@ -132,6 +73,8 @@ jobs:
           retention-days: 7
 
   build:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -186,32 +129,11 @@ jobs:
       - name: Build
         run: mvn install -DskipTests=true -Dgpg.skip -B -V
 
-      - name: Install Spice (https://install.spiceai.org)
-        run: |
-          curl https://install.spiceai.org | /bin/bash
-          echo "$HOME/.spice/bin" >> $GITHUB_PATH
+      - name: Install Spice
+        uses: ./.github/actions/setup-spice
 
       - name: Init and start spice app
-        run: |
-          spice init spice_qs
-          cd spice_qs
-          # Define the dataset inline rather than fetching spiceai/quickstart from
-          # the Spicepod registry, which currently returns a body the CLI cannot
-          # unpack ("Failed to extract Spicepod archive: Could not find EOCD").
-          cat >> spicepod.yaml <<'YAML'
-
-          datasets:
-            - from: s3://spiceai-demo-datasets/taxi_trips/2024/
-              name: taxi_trips
-              description: taxi trips in s3
-              params:
-                file_format: parquet
-              acceleration:
-                enabled: true
-          YAML
-          spice run &> spice.log &
-          # time to initialize added dataset
-          sleep 10
+        uses: ./.github/actions/start-spice-app
 
       - name: Test
         run: |
@@ -258,8 +180,8 @@ jobs:
       - name: SpotBugs
         run: mvn spotbugs:check -B
 
-      - name: Checkstyle
-        run: mvn checkstyle:check -B
+      - name: Checkstyle + API compatibility (japicmp vs latest release)
+        run: mvn checkstyle:check japicmp:cmp -B
 
       - name: Cache OWASP Dependency-Check data
         uses: actions/cache@v4
@@ -269,12 +191,40 @@ jobs:
           restore-keys: |
             dependency-check-data-${{ runner.os }}-
 
-      - name: OWASP Dependency-Check
-        # NVD API is unreliable (429s, timeouts without API key). Don't block CI.
+      # Split so network flakiness and the security gate can't mask each other:
+      # the NVD data refresh may fail or time out without blocking CI, but when
+      # it completes, the check below runs offline against that data and FAILS
+      # the build on real CVSS >= 7 findings.
+      #
+      # The update is incremental and resumable: even a timed-out attempt makes
+      # progress that actions/cache persists (the job still succeeds via the
+      # skip path below), so cold caches converge to a warm one across runs.
+      # Adding the NVD_API_KEY secret makes the update fast and the gate
+      # effectively always-on.
+      - name: OWASP NVD data update (best-effort)
+        id: nvd-update
         continue-on-error: true
+        timeout-minutes: 15
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: mvn dependency-check:check -B -DnvdApiKey="$NVD_API_KEY"
+        run: |
+          EXTRA=""
+          if [ -n "$NVD_API_KEY" ]; then
+            EXTRA="-DnvdApiKey=$NVD_API_KEY"
+          fi
+          mvn dependency-check:update-only -B $EXTRA
+
+      # Gate only on a completed update: a partial database makes
+      # dependency-check force a full re-download regardless of
+      # autoUpdate=false, burning the timeout.
+      - name: OWASP Dependency-Check (gating)
+        if: steps.nvd-update.outcome == 'success'
+        timeout-minutes: 10
+        run: mvn dependency-check:check -B -DautoUpdate=false
+
+      - name: OWASP gate skipped notice
+        if: steps.nvd-update.outcome != 'success'
+        run: echo "::warning::NVD data update did not complete — vulnerability gate skipped this run (add the NVD_API_KEY secret to make it always-on)"
 
       - name: Upload dependency-check report
         if: always()
@@ -283,3 +233,27 @@ jobs:
           name: dependency-check-report
           path: target/dependency-check-report.html
           retention-days: 30
+
+  e2e-chaos:
+    permissions:
+      contents: read
+    name: E2E chaos (runtime restart, frozen peer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Oracle)
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: oracle
+          cache: maven
+
+      - name: Install Spice
+        uses: ./.github/actions/setup-spice
+
+      - name: Run chaos e2e tests
+        env:
+          SPICE_E2E_CHAOS: "1"
+        run: mvn test -B -Dtest=ChaosE2ETest -DfailIfNoTests=true

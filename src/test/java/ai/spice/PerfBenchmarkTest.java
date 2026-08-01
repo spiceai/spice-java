@@ -22,11 +22,17 @@ SOFTWARE.
 
 package ai.spice;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.concurrent.Callable;
 
 import org.apache.arrow.flight.FlightStream;
 import org.apache.arrow.vector.ipc.ArrowReader;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import junit.framework.TestCase;
 
@@ -78,20 +84,74 @@ public class PerfBenchmarkTest extends TestCase {
                 p50 / 1_000, p95 / 1_000, p99 / 1_000);
     }
 
+    private static long p50Micros(long[] sortedNanos) {
+        return sortedNanos[sortedNanos.length / 2] / 1_000;
+    }
+
+    /**
+     * Appends a data point to the file named by the BENCH_JSON env var, in
+     * github-action-benchmark's "customSmallerIsBetter" format. No-op when the
+     * variable is unset (normal test runs).
+     */
+    private static synchronized void recordBench(String name, String unit, long value) throws Exception {
+        String path = System.getenv("BENCH_JSON");
+        if (path == null || path.isEmpty()) {
+            return;
+        }
+        Path file = Path.of(path);
+        JsonArray entries = Files.exists(file)
+                ? JsonParser.parseString(Files.readString(file)).getAsJsonArray()
+                : new JsonArray();
+        JsonObject entry = new JsonObject();
+        entry.addProperty("name", name);
+        entry.addProperty("unit", unit);
+        entry.addProperty("value", value);
+        entries.add(entry);
+        Files.writeString(file, entries.toString());
+    }
+
+    /**
+     * Counts rows and asserts the full expected result arrived — a regression
+     * that drops results must never publish an "improved" latency.
+     */
+    private static long checkedCountRows(FlightStream stream, long expectedRows) throws Exception {
+        long rows = LocalFlightServerTest.countRows(stream);
+        assertEquals(expectedRows, rows);
+        return rows;
+    }
+
+    private static long checkedCountRows(ArrowReader reader, long expectedRows) throws Exception {
+        long rows = LocalFlightServerTest.countRows(reader);
+        assertEquals(expectedRows, rows);
+        return rows;
+    }
+
+    private static Callable<Long> paramsOp(SpiceClient client, long expectedRows) {
+        return () -> {
+            try (ArrowReader reader = client.queryWithParams(SQL, 5L)) {
+                return checkedCountRows(reader, expectedRows);
+            }
+        };
+    }
+
     public void testBenchmarkPlainQuery() throws Exception {
         try (SpiceClient client = SpiceClient.builder().withFlightAddress(server.flightUri()).build()) {
+            final long expectedRows = server.expectedTotalRows();
             Callable<?> op = () -> {
                 try (FlightStream stream = client.query("SELECT * FROM bench")) {
-                    return LocalFlightServerTest.countRows(stream);
+                    return checkedCountRows(stream, expectedRows);
                 }
             };
             measure(WARMUP_ITERATIONS, op);
             long getFlightInfoBefore = server.getFlightInfoCalls.get();
+            long doGetBefore = server.doGetCalls.get();
             long[] samples = measure(MEASURED_ITERATIONS, op);
             System.out.println("[bench] " + stats("query()", samples));
+            recordBench("query() p50", "us", p50Micros(samples));
 
             // The plain query path is exactly 2 RPCs: GetFlightInfo + DoGet.
             assertEquals(MEASURED_ITERATIONS, server.getFlightInfoCalls.get() - getFlightInfoBefore);
+            assertEquals(MEASURED_ITERATIONS, server.doGetCalls.get() - doGetBefore);
         }
     }
 
@@ -103,16 +163,9 @@ public class PerfBenchmarkTest extends TestCase {
                         .withFlightAddress(server.flightUri())
                         .withPreparedStatementCacheSize(0)
                         .build()) {
-            Callable<?> cachedOp = () -> {
-                try (ArrowReader reader = cachedClient.queryWithParams(SQL, 5L)) {
-                    return LocalFlightServerTest.countRows(reader);
-                }
-            };
-            Callable<?> uncachedOp = () -> {
-                try (ArrowReader reader = uncachedClient.queryWithParams(SQL, 5L)) {
-                    return LocalFlightServerTest.countRows(reader);
-                }
-            };
+            final long expectedRows = server.expectedTotalRows();
+            Callable<Long> cachedOp = paramsOp(cachedClient, expectedRows);
+            Callable<Long> uncachedOp = paramsOp(uncachedClient, expectedRows);
 
             // Warm both paths before measuring either, so JIT compilation of the
             // shared code doesn't bias whichever block runs second.
@@ -133,6 +186,8 @@ public class PerfBenchmarkTest extends TestCase {
 
             System.out.println("[bench] " + stats("queryWithParams (cached)", cachedSamples));
             System.out.println("[bench] " + stats("queryWithParams (uncached)", uncachedSamples));
+            recordBench("queryWithParams cached p50", "us", p50Micros(cachedSamples));
+            recordBench("queryWithParams uncached p50", "us", p50Micros(uncachedSamples));
             System.out.printf(
                     "[bench] RPCs per %d queries: cached=%d prepares, uncached=%d prepares + %d closes "
                             + "(2 round trips saved per query on a real network)%n",
@@ -165,6 +220,7 @@ public class PerfBenchmarkTest extends TestCase {
             }
             System.out.printf("[bench] param-root buffer bytes for 100 binds of (long,string,double): %d%n",
                     totalCapacityBytes);
+            recordBench("param-root bytes per 100 binds", "bytes", totalCapacityBytes);
             // Old behavior: >48KB per string vector alone → many MB over 100 binds.
             assertTrue("parameter roots should stay small, used " + totalCapacityBytes + " bytes",
                     totalCapacityBytes < 200_000);

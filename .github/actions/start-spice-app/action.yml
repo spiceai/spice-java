@@ -1,0 +1,55 @@
+name: Start Spice quickstart app
+description: >
+  Initialize a spicepod with the taxi_trips quickstart dataset, start the
+  runtime in the background, and wait for /v1/ready — the single readiness
+  mechanism shared by every job that needs a live runtime (replaces the
+  flaky fixed sleeps that guessed at dataset load time).
+
+inputs:
+  app-dir:
+    description: Directory name for the spice app.
+    default: spice_qs
+  ready-timeout-seconds:
+    description: Maximum seconds to wait for /v1/ready.
+    default: '120'
+
+runs:
+  using: composite
+  steps:
+    - name: Init and start spice app (Unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        spice init "${{ inputs.app-dir }}"
+        cd "${{ inputs.app-dir }}"
+        # Define the dataset inline rather than fetching spiceai/quickstart from
+        # the Spicepod registry, which currently returns a body the CLI cannot
+        # unpack ("Failed to extract Spicepod archive: Could not find EOCD").
+        cat >> spicepod.yaml <<'YAML'
+
+        datasets:
+          - from: s3://spiceai-demo-datasets/taxi_trips/2024/
+            name: taxi_trips
+            description: taxi trips in s3
+            params:
+              file_format: parquet
+            acceleration:
+              enabled: true
+        YAML
+        spice run &> spice.log &
+        for i in $(seq 1 "${{ inputs.ready-timeout-seconds }}"); do
+          if [ "$(curl -s -m 5 http://localhost:8090/v1/ready)" = "ready" ]; then
+            echo "runtime ready after ${i}s"
+            break
+          fi
+          sleep 1
+        done
+        [ "$(curl -s -m 5 http://localhost:8090/v1/ready)" = "ready" ]
+
+    # The Spice runtime does not run on native Windows, so there is no app to
+    # start there: Windows jobs exercise the in-process test suite only (the
+    # availability-gated live tests self-skip).
+    - name: No runtime app on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: Write-Host "Skipping runtime app start on Windows (native runtime unsupported)."
