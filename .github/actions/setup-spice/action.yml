@@ -61,8 +61,10 @@ runs:
         if (-not $ok) { throw "Spice CLI install failed after retries" }
         Add-Content $env:GITHUB_PATH (Join-Path $HOME ".spice\bin")
 
-    - name: Install Spice runtime (Windows)
+    # Native Windows runtime install is not supported by the Spice CLI
+    # ("Open WSL and run the Linux Spice CLI there instead") — Windows jobs
+    # install the CLI only and validate the SDK against the in-process suite.
+    - name: Runtime not installed (Windows)
       if: runner.os == 'Windows' && inputs.install-runtime == 'true'
       shell: pwsh
-      run: |
-        & (Join-Path $HOME ".spice\bin\spice.exe") install
+      run: Write-Host "Spice runtime is not supported on native Windows; live-integration tests will self-skip."

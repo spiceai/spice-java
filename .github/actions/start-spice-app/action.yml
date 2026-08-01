@@ -46,30 +46,10 @@ runs:
         done
         [ "$(curl -s -m 5 http://localhost:8090/v1/ready)" = "ready" ]
 
-    - name: Init and start spice app (Windows)
+    # The Spice runtime does not run on native Windows, so there is no app to
+    # start there: Windows jobs exercise the in-process test suite only (the
+    # availability-gated live tests self-skip).
+    - name: No runtime app on Windows
       if: runner.os == 'Windows'
       shell: pwsh
-      run: |
-        spice init "${{ inputs.app-dir }}"
-        cd "${{ inputs.app-dir }}"
-        @'
-
-        datasets:
-          - from: s3://spiceai-demo-datasets/taxi_trips/2024/
-            name: taxi_trips
-            description: taxi trips in s3
-            params:
-              file_format: parquet
-            acceleration:
-              enabled: true
-        '@ | Add-Content -Path spicepod.yaml
-        Start-Process -FilePath spice run
-        $deadline = (Get-Date).AddSeconds([int]"${{ inputs.ready-timeout-seconds }}")
-        do {
-          try {
-            $ready = (Invoke-WebRequest -Uri "http://localhost:8090/v1/ready" -TimeoutSec 5 -UseBasicParsing).Content
-            if ($ready -eq "ready") { Write-Host "runtime ready"; exit 0 }
-          } catch { }
-          Start-Sleep -Seconds 1
-        } while ((Get-Date) -lt $deadline)
-        throw "runtime did not become ready within ${{ inputs.ready-timeout-seconds }}s"
+      run: Write-Host "Skipping runtime app start on Windows (native runtime unsupported)."

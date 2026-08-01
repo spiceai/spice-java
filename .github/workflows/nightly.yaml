@@ -8,6 +8,8 @@ on:
 
 jobs:
   soak:
+    permissions:
+      contents: read
     name: Soak (30 min mixed workload, leak + latency stability)
     runs-on: ubuntu-latest
     timeout-minutes: 60

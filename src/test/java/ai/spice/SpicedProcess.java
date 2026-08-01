@@ -141,8 +141,13 @@ final class SpicedProcess {
                 if (response.statusCode() == 200) {
                     return;
                 }
-            } catch (IOException | InterruptedException retry) {
+            } catch (IOException retry) {
                 // Not up yet.
+            } catch (InterruptedException interrupted) {
+                // Preserve the interrupt and stop waiting: cancellation must
+                // not be silently converted into more polling.
+                Thread.currentThread().interrupt();
+                throw interrupted;
             }
             Thread.sleep(250);
         }
