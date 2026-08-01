@@ -36,6 +36,14 @@ jobs:
             echo "ERROR: Version mismatch between pom.xml ($POM_VERSION) and Version.java ($JAVA_VERSION)"
             exit 1
           fi
+          # The japicmp gate must compare against the previous release, never
+          # the one being published (a self-comparison is vacuous).
+          JAPICMP_OLD=$(mvn help:evaluate -Dexpression=japicmp.oldVersion -q -DforceStdout)
+          echo "japicmp.oldVersion: $JAPICMP_OLD"
+          if [ "$JAPICMP_OLD" = "$POM_VERSION" ]; then
+            echo "ERROR: japicmp.oldVersion equals the version being released; bump it to the previous release"
+            exit 1
+          fi
 
       - name: Build
         run: make build

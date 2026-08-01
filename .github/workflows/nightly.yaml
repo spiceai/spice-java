@@ -21,50 +21,11 @@ jobs:
           distribution: oracle
           cache: maven
 
-      - name: Build
-        run: mvn install -DskipTests=true -Dgpg.skip -B -V
-
-      - name: Install Spice (https://install.spiceai.org)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for attempt in 1 2 3 4 5; do
-            if curl -fsSL https://install.spiceai.org | /bin/bash && "$HOME/.spice/bin/spice" version; then
-              break
-            fi
-            echo "Spice CLI install failed (attempt $attempt); retrying in $((attempt * 10))s"
-            sleep $((attempt * 10))
-          done
-          "$HOME/.spice/bin/spice" version
-          echo "$HOME/.spice/bin" >> $GITHUB_PATH
-          $HOME/.spice/bin/spice install
+      - name: Install Spice
+        uses: ./.github/actions/setup-spice
 
       - name: Init and start spice app
-        run: |
-          spice init spice_qs
-          cd spice_qs
-          cat >> spicepod.yaml <<'YAML'
-
-          datasets:
-            - from: s3://spiceai-demo-datasets/taxi_trips/2024/
-              name: taxi_trips
-              description: taxi trips in s3
-              params:
-                file_format: parquet
-              acceleration:
-                enabled: true
-          YAML
-          spice run &> spice.log &
-          # Wait for readiness (dataset load) rather than a fixed sleep. The
-          # curl timeouts keep a stalled endpoint from wedging the loop.
-          for i in $(seq 1 120); do
-            if [ "$(curl -s -m 5 http://localhost:8090/v1/ready)" = "ready" ]; then
-              echo "runtime ready after ${i}s"
-              break
-            fi
-            sleep 1
-          done
-          [ "$(curl -s -m 5 http://localhost:8090/v1/ready)" = "ready" ]
+        uses: ./.github/actions/start-spice-app
 
       - name: Run soak
         env:
@@ -78,43 +39,6 @@ jobs:
           name: soak-spiced-log
           path: spice_qs/spice.log
           retention-days: 7
-
-  chaos:
-    name: Chaos e2e (nightly)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 17 (Oracle)
-        uses: actions/setup-java@v4
-        with:
-          java-version: 17
-          distribution: oracle
-          cache: maven
-
-      - name: Build
-        run: mvn install -DskipTests=true -Dgpg.skip -B -V
-
-      - name: Install Spice (https://install.spiceai.org)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for attempt in 1 2 3 4 5; do
-            if curl -fsSL https://install.spiceai.org | /bin/bash && "$HOME/.spice/bin/spice" version; then
-              break
-            fi
-            echo "Spice CLI install failed (attempt $attempt); retrying in $((attempt * 10))s"
-            sleep $((attempt * 10))
-          done
-          "$HOME/.spice/bin/spice" version
-          echo "$HOME/.spice/bin" >> $GITHUB_PATH
-          $HOME/.spice/bin/spice install
-
-      - name: Run chaos e2e tests
-        env:
-          SPICE_E2E_CHAOS: "1"
-        run: mvn test -B -Dtest=ChaosE2ETest -DfailIfNoTests=true
 
   bench-trend:
     name: Benchmark trend (in-process, tracked on gh-pages)
@@ -132,10 +56,12 @@ jobs:
           distribution: oracle
           cache: maven
 
+      # jacoco.skip: published latencies must measure the real SDK, not
+      # coverage-instrumented classes.
       - name: Run benchmarks
         env:
           BENCH_JSON: ${{ github.workspace }}/bench.json
-        run: mvn test -B -Dtest=PerfBenchmarkTest -DfailIfNoTests=true
+        run: mvn test -B -Dtest=PerfBenchmarkTest -DfailIfNoTests=true -Djacoco.skip=true
 
       # Pinned to a full commit SHA (v1.22.1): this third-party action receives
       # a repository-write token, so a mutable tag reference is not acceptable.

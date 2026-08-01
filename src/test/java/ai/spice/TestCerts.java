@@ -22,15 +22,14 @@ SOFTWARE.
 
 package ai.spice;
 
-import java.io.FileWriter;
 import java.math.BigInteger;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
+import java.security.spec.ECGenParameterSpec;
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -107,8 +106,11 @@ final class TestCerts {
     }
 
     private static KeyPair newKeyPair() throws Exception {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-        generator.initialize(2048);
+        // EC P-256: ~300x faster to generate than RSA-2048 (which shows
+        // multi-second outliers on shared CI runners), equally supported by
+        // Netty/gRPC and the SDK's PEM parsing.
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
+        generator.initialize(new ECGenParameterSpec("secp256r1"));
         return generator.generateKeyPair();
     }
 
@@ -144,7 +146,7 @@ final class TestCerts {
     }
 
     private static X509Certificate sign(X509v3CertificateBuilder builder, PrivateKey key) throws Exception {
-        ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(key);
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256withECDSA").build(key);
         return new JcaX509CertificateConverter().getCertificate(builder.build(signer));
     }
 
@@ -157,20 +159,15 @@ final class TestCerts {
     }
 
     private static Path writePem(Path path, Object pemObject) throws Exception {
-        try (JcaPEMWriter writer = new JcaPEMWriter(
-                new FileWriter(path.toFile(), StandardCharsets.UTF_8))) {
+        try (JcaPEMWriter writer = new JcaPEMWriter(Files.newBufferedWriter(path))) {
             writer.writeObject(pemObject);
         }
         return path;
     }
 
     private static Path writeKeyPem(Path path, PrivateKey key) throws Exception {
-        try (JcaPEMWriter writer = new JcaPEMWriter(
-                new FileWriter(path.toFile(), StandardCharsets.UTF_8))) {
-            // PKCS#8 ("PRIVATE KEY"), accepted by both Netty (Flight path) and
-            // the SDK's BouncyCastle PEM parsing (HTTP path).
-            writer.writeObject(new JcaPKCS8Generator(key, null));
-        }
-        return path;
+        // PKCS#8 ("PRIVATE KEY"), accepted by both Netty (Flight path) and
+        // the SDK's BouncyCastle PEM parsing (HTTP path).
+        return writePem(path, new JcaPKCS8Generator(key, null));
     }
 }

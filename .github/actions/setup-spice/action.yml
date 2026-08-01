@@ -1,0 +1,68 @@
+name: Setup Spice
+description: >
+  Install the Spice CLI (and optionally the runtime) with retries and binary
+  verification. The installer resolves the latest release via the GitHub API,
+  which intermittently fails from runner IPs — every call site shares this one
+  hardened implementation. The release/publish pipeline deliberately does NOT
+  use this action: it pins an exact version with checksum verification.
+
+inputs:
+  github-token:
+    description: Token for the installer's GitHub API release lookup.
+    default: ${{ github.token }}
+  install-runtime:
+    description: Also install the Spice runtime (spice install).
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Install Spice CLI (Unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        for attempt in 1 2 3 4 5; do
+          if curl -fsSL https://install.spiceai.org | /bin/bash && "$HOME/.spice/bin/spice" version; then
+            break
+          fi
+          echo "Spice CLI install failed (attempt $attempt); retrying in $((attempt * 10))s"
+          sleep $((attempt * 10))
+        done
+        "$HOME/.spice/bin/spice" version
+        echo "$HOME/.spice/bin" >> "$GITHUB_PATH"
+
+    - name: Install Spice runtime (Unix)
+      if: runner.os != 'Windows' && inputs.install-runtime == 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: $HOME/.spice/bin/spice install
+
+    - name: Install Spice CLI (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        $ok = $false
+        foreach ($attempt in 1..5) {
+          try {
+            curl.exe -fsSL "https://install.spiceai.org/Install.ps1" -o Install.ps1
+            PowerShell -ExecutionPolicy Bypass -File ./Install.ps1
+            & (Join-Path $HOME ".spice\bin\spice.exe") version
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+          } catch {
+            Write-Host "Spice CLI install failed (attempt $attempt): $_"
+          }
+          Start-Sleep -Seconds ($attempt * 10)
+        }
+        if (-not $ok) { throw "Spice CLI install failed after retries" }
+        Add-Content $env:GITHUB_PATH (Join-Path $HOME ".spice\bin")
+
+    - name: Install Spice runtime (Windows)
+      if: runner.os == 'Windows' && inputs.install-runtime == 'true'
+      shell: pwsh
+      run: |
+        & (Join-Path $HOME ".spice\bin\spice.exe") install

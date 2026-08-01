@@ -39,6 +39,14 @@
         <!-- Placeholder for JDK-version-specific JVM flags (e.g. sun.misc.Unsafe access).
              Set via -DextraArgLine="..." on the Maven command line. -->
         <extraArgLine></extraArgLine>
+        <!-- Default for surefire's @{argLine}: normally set by JaCoCo's
+             prepare-agent; this empty default keeps test runs working when
+             JaCoCo is skipped (-Djacoco.skip=true, e.g. benchmarks). -->
+        <argLine></argLine>
+        <!-- The last published release, which the japicmp API-compatibility
+             gate compares against. Bump when releasing; the publish workflow
+             fails if this still equals the version being released. -->
+        <japicmp.oldVersion>0.6.0</japicmp.oldVersion>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -247,8 +255,7 @@
                         <dependency>
                             <groupId>ai.spice</groupId>
                             <artifactId>spiceai</artifactId>
-                            <version>0.6.0</version>
-                            <type>jar</type>
+                            <version>${japicmp.oldVersion}</version>
                         </dependency>
                     </oldVersion>
                     <parameter>

@@ -22,11 +22,17 @@ SOFTWARE.
 
 package ai.spice;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.concurrent.Callable;
 
 import org.apache.arrow.flight.FlightStream;
 import org.apache.arrow.vector.ipc.ArrowReader;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import junit.framework.TestCase;
 
@@ -92,16 +98,40 @@ public class PerfBenchmarkTest extends TestCase {
         if (path == null || path.isEmpty()) {
             return;
         }
-        java.nio.file.Path file = java.nio.file.Path.of(path);
-        com.google.gson.JsonArray entries = java.nio.file.Files.exists(file)
-                ? com.google.gson.JsonParser.parseString(java.nio.file.Files.readString(file)).getAsJsonArray()
-                : new com.google.gson.JsonArray();
-        com.google.gson.JsonObject entry = new com.google.gson.JsonObject();
+        Path file = Path.of(path);
+        JsonArray entries = Files.exists(file)
+                ? JsonParser.parseString(Files.readString(file)).getAsJsonArray()
+                : new JsonArray();
+        JsonObject entry = new JsonObject();
         entry.addProperty("name", name);
         entry.addProperty("unit", unit);
         entry.addProperty("value", value);
         entries.add(entry);
-        java.nio.file.Files.writeString(file, entries.toString());
+        Files.writeString(file, entries.toString());
+    }
+
+    /**
+     * Counts rows and asserts the full expected result arrived — a regression
+     * that drops results must never publish an "improved" latency.
+     */
+    private static long checkedCountRows(FlightStream stream, long expectedRows) throws Exception {
+        long rows = LocalFlightServerTest.countRows(stream);
+        assertEquals(expectedRows, rows);
+        return rows;
+    }
+
+    private static long checkedCountRows(ArrowReader reader, long expectedRows) throws Exception {
+        long rows = LocalFlightServerTest.countRows(reader);
+        assertEquals(expectedRows, rows);
+        return rows;
+    }
+
+    private static Callable<Long> paramsOp(SpiceClient client, long expectedRows) {
+        return () -> {
+            try (ArrowReader reader = client.queryWithParams(SQL, 5L)) {
+                return checkedCountRows(reader, expectedRows);
+            }
+        };
     }
 
     public void testBenchmarkPlainQuery() throws Exception {
@@ -109,13 +139,7 @@ public class PerfBenchmarkTest extends TestCase {
             final long expectedRows = server.expectedTotalRows();
             Callable<?> op = () -> {
                 try (FlightStream stream = client.query("SELECT * FROM bench")) {
-                    long rows = LocalFlightServerTest.countRows(stream);
-                    // Guard the measurement's meaning: a regression that drops
-                    // results would otherwise publish an "improved" latency.
-                    if (rows != expectedRows) {
-                        throw new AssertionError("expected " + expectedRows + " rows, got " + rows);
-                    }
-                    return rows;
+                    return checkedCountRows(stream, expectedRows);
                 }
             };
             measure(WARMUP_ITERATIONS, op);
@@ -140,24 +164,8 @@ public class PerfBenchmarkTest extends TestCase {
                         .withPreparedStatementCacheSize(0)
                         .build()) {
             final long expectedRows = server.expectedTotalRows();
-            Callable<?> cachedOp = () -> {
-                try (ArrowReader reader = cachedClient.queryWithParams(SQL, 5L)) {
-                    long rows = LocalFlightServerTest.countRows(reader);
-                    if (rows != expectedRows) {
-                        throw new AssertionError("expected " + expectedRows + " rows, got " + rows);
-                    }
-                    return rows;
-                }
-            };
-            Callable<?> uncachedOp = () -> {
-                try (ArrowReader reader = uncachedClient.queryWithParams(SQL, 5L)) {
-                    long rows = LocalFlightServerTest.countRows(reader);
-                    if (rows != expectedRows) {
-                        throw new AssertionError("expected " + expectedRows + " rows, got " + rows);
-                    }
-                    return rows;
-                }
-            };
+            Callable<Long> cachedOp = paramsOp(cachedClient, expectedRows);
+            Callable<Long> uncachedOp = paramsOp(uncachedClient, expectedRows);
 
             // Warm both paths before measuring either, so JIT compilation of the
             // shared code doesn't bias whichever block runs second.

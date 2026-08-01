@@ -22,8 +22,13 @@ SOFTWARE.
 
 package ai.spice;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -136,14 +141,9 @@ final class TestFlightSqlServer implements AutoCloseable {
                 : Location.forGrpcInsecure("localhost", 0);
         FlightServer.Builder builder = FlightServer.builder(allocator, location, new Producer());
         if (certs != null) {
-            // The builder defers reading the streams until build(), so use
-            // in-memory streams rather than files that would be closed by then.
-            builder.useTls(
-                    new java.io.ByteArrayInputStream(java.nio.file.Files.readAllBytes(certs.serverCert)),
-                    new java.io.ByteArrayInputStream(java.nio.file.Files.readAllBytes(certs.serverKey)));
+            builder.useTls(pemStream(certs.serverCert), pemStream(certs.serverKey));
             if (requireClientCert) {
-                builder.useMTlsClientVerification(
-                        new java.io.ByteArrayInputStream(java.nio.file.Files.readAllBytes(certs.caCert)));
+                builder.useMTlsClientVerification(pemStream(certs.caCert));
             }
         }
         if (expectedUser != null) {
@@ -191,6 +191,14 @@ final class TestFlightSqlServer implements AutoCloseable {
     /** The next call presenting a bearer token is rejected with UNAUTHENTICATED. */
     void rejectNextBearerToken() {
         rejectNextBearer.set(true);
+    }
+
+    /**
+     * PEM file as an in-memory stream: the FlightServer builder defers reading
+     * its TLS streams until build(), so file streams would be closed by then.
+     */
+    private static InputStream pemStream(Path pem) throws IOException {
+        return new ByteArrayInputStream(Files.readAllBytes(pem));
     }
 
     long expectedTotalRows() {

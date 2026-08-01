@@ -25,6 +25,8 @@ package ai.spice;
 import java.net.URI;
 import java.util.concurrent.ExecutionException;
 
+import javax.net.ssl.SSLException;
+
 import org.apache.arrow.flight.FlightStream;
 import org.apache.arrow.vector.ipc.ArrowReader;
 
@@ -129,7 +131,7 @@ public class MtlsTest extends TestCase {
     private static void assertTlsFailure(Throwable failure) {
         StringBuilder chain = new StringBuilder();
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-            if (cause instanceof javax.net.ssl.SSLException) {
+            if (cause instanceof SSLException) {
                 return;
             }
             chain.append(cause.getClass().getName()).append(": ").append(cause.getMessage()).append(" <- ");

@@ -43,97 +43,11 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: mvn --% install -DskipTests=true -Dgpg.skip -B -V # tell powershell to stop parsing with --% so it doesn't error with "Unknown lifecycle phase .skip"
 
-      - name: Install Spice (https://install.spiceai.org) (Unix)
-        if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # The installer resolves the latest release via the GitHub API, which
-        # intermittently fails from runner IPs (empty version -> corrupt
-        # archive). Retry with backoff and verify the binary actually works.
-        run: |
-          for attempt in 1 2 3 4 5; do
-            if curl -fsSL https://install.spiceai.org | /bin/bash && "$HOME/.spice/bin/spice" version; then
-              break
-            fi
-            echo "Spice CLI install failed (attempt $attempt); retrying in $((attempt * 10))s"
-            sleep $((attempt * 10))
-          done
-          "$HOME/.spice/bin/spice" version
-          echo "$HOME/.spice/bin" >> $GITHUB_PATH
-          $HOME/.spice/bin/spice install
+      - name: Install Spice
+        uses: ./.github/actions/setup-spice
 
-      - name: install Spice (Windows)
-        if: matrix.os == 'windows-latest'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: pwsh
-        run: |
-          $ok = $false
-          foreach ($attempt in 1..5) {
-            try {
-              curl.exe -fsSL "https://install.spiceai.org/Install.ps1" -o Install.ps1
-              PowerShell -ExecutionPolicy Bypass -File ./Install.ps1
-              & (Join-Path $HOME ".spice\bin\spice.exe") version
-              if ($LASTEXITCODE -eq 0) { $ok = $true; break }
-            } catch {
-              Write-Host "Spice CLI install failed (attempt $attempt): $_"
-            }
-            Start-Sleep -Seconds ($attempt * 10)
-          }
-          if (-not $ok) { throw "Spice CLI install failed after retries" }
-
-      - name: add Spice bin to PATH (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          Add-Content $env:GITHUB_PATH (Join-Path $HOME ".spice\bin")
-        shell: pwsh
-
-      - name: Init and start spice app (Unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          spice init spice_qs
-          cd spice_qs
-          # Define the dataset inline rather than fetching spiceai/quickstart from
-          # the Spicepod registry, which currently returns a body the CLI cannot
-          # unpack ("Failed to extract Spicepod archive: Could not find EOCD").
-          cat >> spicepod.yaml <<'YAML'
-
-          datasets:
-            - from: s3://spiceai-demo-datasets/taxi_trips/2024/
-              name: taxi_trips
-              description: taxi trips in s3
-              params:
-                file_format: parquet
-              acceleration:
-                enabled: true
-          YAML
-          spiced &> spice.log &
-          # time to initialize added dataset
-          sleep 10
-
-      - name: Init and start spice app (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          spice init spice_qs
-          cd spice_qs
-          # Define the dataset inline rather than fetching spiceai/quickstart from
-          # the Spicepod registry, which currently returns a body the CLI cannot
-          # unpack ("Failed to extract Spicepod archive: Could not find EOCD").
-          @'
-
-          datasets:
-            - from: s3://spiceai-demo-datasets/taxi_trips/2024/
-              name: taxi_trips
-              description: taxi trips in s3
-              params:
-                file_format: parquet
-              acceleration:
-                enabled: true
-          '@ | Add-Content -Path spicepod.yaml
-          Start-Process -FilePath spice run
-          # time to initialize added dataset
-          Start-Sleep -Seconds 10
-        shell: pwsh
+      - name: Init and start spice app
+        uses: ./.github/actions/start-spice-app
 
       - name: Test
         run: mvn test -B
@@ -211,43 +125,11 @@ jobs:
       - name: Build
         run: mvn install -DskipTests=true -Dgpg.skip -B -V
 
-      - name: Install Spice (https://install.spiceai.org)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Authenticated + retried: the installer's release lookup intermittently
-        # fails from runner IPs without a token (this step caused most CI flakes).
-        run: |
-          for attempt in 1 2 3 4 5; do
-            if curl -fsSL https://install.spiceai.org | /bin/bash && "$HOME/.spice/bin/spice" version; then
-              break
-            fi
-            echo "Spice CLI install failed (attempt $attempt); retrying in $((attempt * 10))s"
-            sleep $((attempt * 10))
-          done
-          "$HOME/.spice/bin/spice" version
-          echo "$HOME/.spice/bin" >> $GITHUB_PATH
+      - name: Install Spice
+        uses: ./.github/actions/setup-spice
 
       - name: Init and start spice app
-        run: |
-          spice init spice_qs
-          cd spice_qs
-          # Define the dataset inline rather than fetching spiceai/quickstart from
-          # the Spicepod registry, which currently returns a body the CLI cannot
-          # unpack ("Failed to extract Spicepod archive: Could not find EOCD").
-          cat >> spicepod.yaml <<'YAML'
-
-          datasets:
-            - from: s3://spiceai-demo-datasets/taxi_trips/2024/
-              name: taxi_trips
-              description: taxi trips in s3
-              params:
-                file_format: parquet
-              acceleration:
-                enabled: true
-          YAML
-          spice run &> spice.log &
-          # time to initialize added dataset
-          sleep 10
+        uses: ./.github/actions/start-spice-app
 
       - name: Test
         run: |
@@ -294,11 +176,8 @@ jobs:
       - name: SpotBugs
         run: mvn spotbugs:check -B
 
-      - name: Checkstyle
-        run: mvn checkstyle:check -B
-
-      - name: API compatibility (japicmp vs latest release)
-        run: mvn japicmp:cmp -B
+      - name: Checkstyle + API compatibility (japicmp vs latest release)
+        run: mvn checkstyle:check japicmp:cmp -B
 
       - name: Cache OWASP Dependency-Check data
         uses: actions/cache@v4
@@ -350,27 +229,9 @@ jobs:
           distribution: oracle
           cache: maven
 
-      - name: Build
-        run: mvn install -DskipTests=true -Dgpg.skip -B -V
+      - name: Install Spice
+        uses: ./.github/actions/setup-spice
 
-      - name: Install Spice (https://install.spiceai.org)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for attempt in 1 2 3 4 5; do
-            if curl -fsSL https://install.spiceai.org | /bin/bash && "$HOME/.spice/bin/spice" version; then
-              break
-            fi
-            echo "Spice CLI install failed (attempt $attempt); retrying in $((attempt * 10))s"
-            sleep $((attempt * 10))
-          done
-          "$HOME/.spice/bin/spice" version
-          echo "$HOME/.spice/bin" >> $GITHUB_PATH
-          $HOME/.spice/bin/spice install
-
-      # The chaos tests start, kill, freeze, and restart their own spiced
-      # process (no datasets needed), validating end-to-end that the SDK
-      # survives runtime crashes, restarts, and frozen peers.
       - name: Run chaos e2e tests
         env:
           SPICE_E2E_CHAOS: "1"

@@ -22,16 +22,7 @@ SOFTWARE.
 
 package ai.spice;
 
-import java.io.IOException;
-import java.net.ServerSocket;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.Duration;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -39,9 +30,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.arrow.flight.FlightRuntimeException;
 import org.apache.arrow.flight.FlightStream;
+import org.apache.arrow.vector.ipc.ArrowReader;
 
 import junit.framework.TestCase;
 
@@ -61,6 +54,16 @@ public class ChaosE2ETest extends TestCase {
 
     /** Wall-clock guard for calls that would hang forever if a feature is broken. */
     private static final long CALL_GUARD_SECONDS = 120;
+
+    /**
+     * Daemon threads: if a guarded call ignores interruption (the very
+     * regression being hunted), the stuck worker must not keep the JVM alive.
+     */
+    private static final ExecutorService GUARD_EXECUTOR = Executors.newCachedThreadPool(runnable -> {
+        Thread thread = new Thread(runnable, "chaos-guard");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private SpicedProcess spiced;
 
@@ -97,39 +100,24 @@ public class ChaosE2ETest extends TestCase {
 
     private static long countRows(SpiceClient client, String sql) throws Exception {
         try (FlightStream stream = client.query(sql)) {
-            long rows = 0;
-            while (stream.next()) {
-                rows += stream.getRoot().getRowCount();
-            }
-            return rows;
+            return LocalFlightServerTest.countRows(stream);
         }
     }
 
     /** Runs the callable with a hang guard so a broken SDK cannot wedge the suite. */
     private static <T> T guarded(Callable<T> callable) throws Exception {
-        // Daemon threads: if the guarded call ignores interruption (the very
-        // regression being hunted), the stuck worker must not keep the JVM alive.
-        ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
-            Thread thread = new Thread(runnable, "chaos-guard");
-            thread.setDaemon(true);
-            return thread;
-        });
+        Future<T> future = GUARD_EXECUTOR.submit(callable);
         try {
-            Future<T> future = executor.submit(callable);
-            try {
-                return future.get(CALL_GUARD_SECONDS, TimeUnit.SECONDS);
-            } catch (TimeoutException e) {
-                future.cancel(true);
-                fail("Call did not complete within " + CALL_GUARD_SECONDS + "s — likely hung");
-                throw new IllegalStateException("unreachable");
-            } catch (ExecutionException e) {
-                if (e.getCause() instanceof Exception) {
-                    throw (Exception) e.getCause();
-                }
-                throw e;
+            return future.get(CALL_GUARD_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw new AssertionError(
+                    "Call did not complete within " + CALL_GUARD_SECONDS + "s — likely hung");
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof Exception) {
+                throw (Exception) e.getCause();
             }
-        } finally {
-            executor.shutdownNow();
+            throw e;
         }
     }
 
@@ -143,12 +131,12 @@ public class ChaosE2ETest extends TestCase {
         if (!chaosEnabled()) {
             return;
         }
-        spiced = SpicedProcess.start();
+        spiced = SpicedProcess.start(SpicedProcess.DATASET_FREE_SPICEPOD);
 
         try (SpiceClient client = newClient(3)) {
             assertEquals(1, countRows(client, "SELECT 1"));
             // Prime the prepared-statement cache so the restart invalidates a live handle.
-            try (org.apache.arrow.vector.ipc.ArrowReader reader = client.queryWithParams("SELECT $1", 42L)) {
+            try (ArrowReader reader = client.queryWithParams("SELECT $1", 42L)) {
                 assertTrue(reader.loadNextBatch());
             }
 
@@ -167,8 +155,7 @@ public class ChaosE2ETest extends TestCase {
 
             // Same client, no reset(): reconnect + re-prepare must be automatic.
             assertEquals(1, (long) guarded(() -> countRows(client, "SELECT 1")));
-            try (org.apache.arrow.vector.ipc.ArrowReader reader = guarded(
-                    () -> client.queryWithParams("SELECT $1", 43L))) {
+            try (ArrowReader reader = guarded(() -> client.queryWithParams("SELECT $1", 43L))) {
                 assertTrue("cached statement must transparently re-prepare after restart",
                         reader.loadNextBatch());
             }
@@ -184,7 +171,7 @@ public class ChaosE2ETest extends TestCase {
         if (!chaosEnabled()) {
             return;
         }
-        spiced = SpicedProcess.start();
+        spiced = SpicedProcess.start(SpicedProcess.DATASET_FREE_SPICEPOD);
 
         try (SpiceClient client = newClient(5)) {
             assertEquals(1, countRows(client, "SELECT 1"));
@@ -193,8 +180,7 @@ public class ChaosE2ETest extends TestCase {
             // Bring the runtime back concurrently, inside the retry window.
             // The restarter is always joined (finally) so a failing assertion
             // can't leave it racing teardown, and its failure is surfaced.
-            final java.util.concurrent.atomic.AtomicReference<Exception> restartFailure =
-                    new java.util.concurrent.atomic.AtomicReference<>();
+            final AtomicReference<Exception> restartFailure = new AtomicReference<>();
             Thread restarter = new Thread(() -> {
                 try {
                     Thread.sleep(1_500);
@@ -230,7 +216,7 @@ public class ChaosE2ETest extends TestCase {
         if (!chaosEnabled()) {
             return;
         }
-        spiced = SpicedProcess.start();
+        spiced = SpicedProcess.start(SpicedProcess.DATASET_FREE_SPICEPOD);
 
         // ~10^7 rows from pure SQL92 cross joins — no version-specific functions.
         String bigSql = "WITH t AS (SELECT * FROM (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)) v(x)) "
@@ -244,11 +230,7 @@ public class ChaosE2ETest extends TestCase {
                     try (FlightStream stream = client.query(bigSql)) {
                         assertTrue("stream should produce at least one batch", stream.next());
                         spiced.kill();
-                        long rows = 0;
-                        while (stream.next()) {
-                            rows += stream.getRoot().getRowCount();
-                        }
-                        return rows;
+                        return LocalFlightServerTest.countRows(stream);
                     }
                 });
                 fail("Expected a transport error when the runtime dies mid-stream");
@@ -265,14 +247,21 @@ public class ChaosE2ETest extends TestCase {
     /**
      * A frozen (SIGSTOP) runtime — the unresponsive-peer case TCP alone never
      * detects — is caught by HTTP/2 keep-alive: the in-flight call fails with a
-     * transport error instead of hanging forever, and the client recovers when
-     * the runtime thaws.
+     * transport error instead of hanging forever. Detection is measured on a
+     * retry-free client so the window is one keep-alive cycle; recovery after
+     * the thaw is then verified with a fresh client that retries while the
+     * transport re-establishes.
      */
     public void testFrozenRuntimeDetectedByKeepAlive() throws Exception {
         if (!chaosEnabled()) {
             return;
         }
-        spiced = SpicedProcess.start();
+        spiced = SpicedProcess.start(SpicedProcess.DATASET_FREE_SPICEPOD);
+
+        // Derived from the SDK's actual keep-alive tuning plus generous
+        // scheduler slack; not instant (that would be a refusal, not detection).
+        long detectionUpperBound = (SpiceClient.KEEPALIVE_TIME_SECONDS
+                + SpiceClient.KEEPALIVE_TIMEOUT_SECONDS) * 2 + 20;
 
         try (SpiceClient client = newClient(0)) {
             assertEquals(1, countRows(client, "SELECT 1"));
@@ -287,181 +276,17 @@ public class ChaosE2ETest extends TestCase {
                     long elapsedSeconds = (System.nanoTime() - start) / 1_000_000_000L;
                     assertTrue("cause should be a Flight transport error, got: " + e.getCause(),
                             e.getCause() instanceof FlightRuntimeException);
-                    // Keep-alive is 30s interval + 10s timeout; the call must fail in
-                    // that order of magnitude — not instantly (that would mean a
-                    // connection refusal, not detection) and never hang.
-                    assertTrue("keep-alive detection took " + elapsedSeconds + "s",
-                            elapsedSeconds >= 2 && elapsedSeconds <= 100);
+                    assertTrue("keep-alive detection took " + elapsedSeconds + "s (bound: "
+                            + detectionUpperBound + "s)",
+                            elapsedSeconds >= 2 && elapsedSeconds <= detectionUpperBound);
                 }
             } finally {
                 spiced.thaw();
             }
-
-            // After thawing, the same client works again (retries allowed for
-            // the first call while the transport re-establishes).
-            try (SpiceClient recovered = newClient(3)) {
-                assertEquals(1, (long) guarded(() -> countRows(recovered, "SELECT 1")));
-            }
-        }
-    }
-
-    // ==================== spiced process management ====================
-
-    /**
-     * A spiced process bound to fixed localhost ports with a dataset-free
-     * spicepod. Restarts reuse the same ports so clients reconnect to the
-     * same address, mirroring a crashed server replaced behind a stable VIP.
-     */
-    private static final class SpicedProcess {
-        final Path workspace;
-        final int httpPort;
-        final int flightPort;
-        final int metricsPort;
-        private Process process;
-
-        private SpicedProcess(Path workspace, int httpPort, int flightPort, int metricsPort) {
-            this.workspace = workspace;
-            this.httpPort = httpPort;
-            this.flightPort = flightPort;
-            this.metricsPort = metricsPort;
         }
 
-        static String findBinary() {
-            String env = System.getenv("SPICED_BIN");
-            if (env != null && Files.isExecutable(Path.of(env))) {
-                return env;
-            }
-            Path home = Path.of(System.getProperty("user.home"), ".spice", "bin", "spiced");
-            return Files.isExecutable(home) ? home.toString() : null;
-        }
-
-        static SpicedProcess start() throws Exception {
-            // Ephemeral ports are released before spiced binds them, so a
-            // rare port steal is possible; retry with fresh ports.
-            Exception lastFailure = null;
-            for (int attempt = 1; attempt <= 3; attempt++) {
-                Path workspace = Files.createTempDirectory("spice-chaos");
-                Files.writeString(workspace.resolve("spicepod.yaml"),
-                        "version: v1\nkind: Spicepod\nname: chaos\n", StandardCharsets.UTF_8);
-                SpicedProcess spiced = new SpicedProcess(
-                        workspace, freePort(), freePort(), freePort());
-                try {
-                    spiced.launch();
-                    return spiced;
-                } catch (Exception e) {
-                    lastFailure = e;
-                }
-            }
-            throw lastFailure;
-        }
-
-        /**
-         * Starts a fresh process on the same ports and workspace — clients
-         * must be able to reconnect to the same address, as with a crashed
-         * server replaced behind a stable VIP. No port retry is possible here.
-         */
-        SpicedProcess restart() throws Exception {
-            SpicedProcess fresh = new SpicedProcess(workspace, httpPort, flightPort, metricsPort);
-            fresh.launch();
-            return fresh;
-        }
-
-        private void launch() throws Exception {
-            ProcessBuilder builder = new ProcessBuilder(
-                    findBinary(),
-                    "--http", "127.0.0.1:" + httpPort,
-                    "--flight", "127.0.0.1:" + flightPort,
-                    "--metrics", "127.0.0.1:" + metricsPort);
-            builder.directory(workspace.toFile());
-            builder.redirectErrorStream(true);
-            builder.redirectOutput(workspace.resolve("spiced.log").toFile());
-            process = builder.start();
-            try {
-                waitUntilHealthy();
-            } catch (Exception startupFailure) {
-                // Never orphan a half-started process the caller has no handle to.
-                try {
-                    destroy();
-                } catch (Exception cleanup) {
-                    startupFailure.addSuppressed(cleanup);
-                }
-                throw startupFailure;
-            }
-        }
-
-        private void waitUntilHealthy() throws Exception {
-            HttpClient http = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(1))
-                    .build();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(new URI("http://127.0.0.1:" + httpPort + "/health"))
-                    .timeout(Duration.ofSeconds(2))
-                    .GET()
-                    .build();
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
-            while (System.nanoTime() < deadline) {
-                if (!process.isAlive()) {
-                    throw new IllegalStateException("spiced exited during startup; see "
-                            + workspace.resolve("spiced.log"));
-                }
-                try {
-                    HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
-                    if (response.statusCode() == 200) {
-                        return;
-                    }
-                } catch (IOException | InterruptedException retry) {
-                    // Not up yet.
-                }
-                Thread.sleep(250);
-            }
-            throw new IllegalStateException("spiced did not become healthy within 60s");
-        }
-
-        /** SIGKILL — an abrupt crash, no graceful shutdown. */
-        void kill() throws Exception {
-            process.destroyForcibly();
-            if (!process.waitFor(10, TimeUnit.SECONDS)) {
-                throw new IllegalStateException(
-                        "spiced pid " + process.pid() + " did not exit within 10s of SIGKILL");
-            }
-        }
-
-        /** SIGSTOP — the process is alive but completely unresponsive. */
-        void freeze() throws Exception {
-            signal("STOP");
-        }
-
-        /** SIGCONT — resume a frozen process. */
-        void thaw() throws Exception {
-            signal("CONT");
-        }
-
-        private void signal(String name) throws Exception {
-            Process kill = new ProcessBuilder("kill", "-" + name, Long.toString(process.pid())).start();
-            if (!kill.waitFor(5, TimeUnit.SECONDS) || kill.exitValue() != 0) {
-                throw new IllegalStateException("kill -" + name + " failed for pid " + process.pid());
-            }
-        }
-
-        void destroy() throws Exception {
-            if (process != null && process.isAlive()) {
-                // A frozen process ignores SIGKILL delivery ordering with SIGSTOP
-                // pending on some platforms; thaw first, best-effort.
-                try {
-                    signal("CONT");
-                } catch (Exception ignored) {
-                    // Already dead or never frozen.
-                }
-                process.destroyForcibly();
-                process.waitFor(10, TimeUnit.SECONDS);
-            }
-        }
-
-        private static int freePort() throws IOException {
-            try (ServerSocket socket = new ServerSocket(0)) {
-                socket.setReuseAddress(true);
-                return socket.getLocalPort();
-            }
+        try (SpiceClient recovered = newClient(3)) {
+            assertEquals(1, (long) guarded(() -> countRows(recovered, "SELECT 1")));
         }
     }
 }

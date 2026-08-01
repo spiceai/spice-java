@@ -157,6 +157,12 @@ public class SpiceClient implements AutoCloseable {
     private static final Duration HTTP_CONNECT_TIMEOUT = Duration.ofSeconds(15);
     private static final Duration HTTP_REQUEST_TIMEOUT = Duration.ofSeconds(60);
 
+    // HTTP/2 keep-alive tuning for dead/unresponsive-peer detection.
+    // Package-visible so resilience tests derive their detection windows
+    // from the real values instead of restating them.
+    static final long KEEPALIVE_TIME_SECONDS = 30;
+    static final long KEEPALIVE_TIMEOUT_SECONDS = 10;
+
     // Pre-computed parameter field names to avoid string concatenation in hot path
     private static final String[] PARAM_NAMES = new String[64];
     static {
@@ -497,8 +503,8 @@ public class SpiceClient implements AutoCloseable {
         }
         channelBuilder
                 // HTTP/2 keep-alive to detect dead/idle connections behind load balancers
-                .keepAliveTime(30, java.util.concurrent.TimeUnit.SECONDS)
-                .keepAliveTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .keepAliveTime(KEEPALIVE_TIME_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
+                .keepAliveTimeout(KEEPALIVE_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
                 .keepAliveWithoutCalls(true)
                 .maxInboundMessageSize(MAX_INBOUND_MESSAGE_SIZE)
                 .maxInboundMetadataSize(MAX_INBOUND_METADATA_SIZE);
