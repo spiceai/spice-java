@@ -22,8 +22,13 @@ SOFTWARE.
 
 package ai.spice;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -104,7 +109,7 @@ final class TestFlightSqlServer implements AutoCloseable {
 
     /** Starts an unauthenticated server on an ephemeral port. */
     TestFlightSqlServer() throws Exception {
-        this(null, null);
+        this(null, null, null, false);
     }
 
     /**
@@ -113,9 +118,34 @@ final class TestFlightSqlServer implements AutoCloseable {
      * bearer tokens for subsequent calls (mirroring Spice's auth flow).
      */
     TestFlightSqlServer(String expectedUser, String expectedPassword) throws Exception {
+        this(expectedUser, expectedPassword, null, false);
+    }
+
+    /**
+     * Starts a TLS server using the fixture's server certificate. With
+     * requireClientCert, clients must present a certificate signed by the
+     * fixture CA (mutual TLS).
+     */
+    TestFlightSqlServer(TestCerts certs, boolean requireClientCert) throws Exception {
+        this(null, null, certs, requireClientCert);
+    }
+
+    private TestFlightSqlServer(String expectedUser, String expectedPassword,
+            TestCerts certs, boolean requireClientCert) throws Exception {
         this.allocator = new RootAllocator(Long.MAX_VALUE);
-        FlightServer.Builder builder = FlightServer.builder(
-                allocator, Location.forGrpcInsecure("localhost", 0), new Producer());
+        // TLS tests bind and dial 127.0.0.1 explicitly: "localhost" can resolve
+        // to ::1 first, and a connection-refused there would let negative TLS
+        // tests pass without ever reaching the handshake under test.
+        Location location = certs != null
+                ? Location.forGrpcTls("127.0.0.1", 0)
+                : Location.forGrpcInsecure("localhost", 0);
+        FlightServer.Builder builder = FlightServer.builder(allocator, location, new Producer());
+        if (certs != null) {
+            builder.useTls(pemStream(certs.serverCert), pemStream(certs.serverKey));
+            if (requireClientCert) {
+                builder.useMTlsClientVerification(pemStream(certs.caCert));
+            }
+        }
         if (expectedUser != null) {
             CallHeaderAuthenticator inner = new GeneratedBearerTokenAuthenticator(
                     new BasicCallHeaderAuthenticator((username, password) -> {
@@ -161,6 +191,14 @@ final class TestFlightSqlServer implements AutoCloseable {
     /** The next call presenting a bearer token is rejected with UNAUTHENTICATED. */
     void rejectNextBearerToken() {
         rejectNextBearer.set(true);
+    }
+
+    /**
+     * PEM file as an in-memory stream: the FlightServer builder defers reading
+     * its TLS streams until build(), so file streams would be closed by then.
+     */
+    private static InputStream pemStream(Path pem) throws IOException {
+        return new ByteArrayInputStream(Files.readAllBytes(pem));
     }
 
     long expectedTotalRows() {

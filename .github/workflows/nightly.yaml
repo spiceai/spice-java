@@ -1,0 +1,87 @@
+name: nightly
+
+on:
+  schedule:
+    # 08:00 UTC daily
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+jobs:
+  soak:
+    permissions:
+      contents: read
+    name: Soak (30 min mixed workload, leak + latency stability)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Oracle)
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: oracle
+          cache: maven
+
+      - name: Install Spice
+        uses: ./.github/actions/setup-spice
+
+      - name: Init and start spice app
+        uses: ./.github/actions/start-spice-app
+
+      - name: Run soak
+        env:
+          SPICE_SOAK_SECONDS: "1800"
+        run: mvn test -B -Dtest=SoakTest -DfailIfNoTests=true
+
+      - name: Upload runtime log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-spiced-log
+          path: spice_qs/spice.log
+          retention-days: 7
+
+  bench-trend:
+    name: Benchmark trend (in-process, tracked on gh-pages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Oracle)
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: oracle
+          cache: maven
+
+      # jacoco.skip: published latencies must measure the real SDK, not
+      # coverage-instrumented classes.
+      - name: Run benchmarks
+        env:
+          BENCH_JSON: ${{ github.workspace }}/bench.json
+        run: mvn test -B -Dtest=PerfBenchmarkTest -DfailIfNoTests=true -Djacoco.skip=true
+
+      # Pinned to a full commit SHA (v1.22.1): this third-party action receives
+      # a repository-write token, so a mutable tag reference is not acceptable.
+      # Data is committed to the gh-pages branch (created ahead of first run).
+      # Note: pushes made with GITHUB_TOKEN do not trigger a Pages build — the
+      # trend data always accumulates in-branch; serving the dashboard requires
+      # enabling Pages for gh-pages in repo settings.
+      - name: Publish benchmark trend
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        with:
+          name: spice-java in-process benchmarks
+          tool: customSmallerIsBetter
+          output-file-path: bench.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          # Runners are noisy: track the trend and call out big regressions,
+          # but never fail the nightly on wall-clock variance alone.
+          alert-threshold: '150%'
+          fail-on-alert: false
+          comment-on-alert: false
+          summary-always: true

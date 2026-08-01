@@ -8,6 +8,8 @@ on:
 
 jobs:
   publish:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -16,13 +18,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # The GPG signing key is deliberately NOT imported here: it is imported
+      # in a dedicated step immediately before publishing, after every piece
+      # of downloaded third-party code has already run.
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: oracle
           java-version: 17
-          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
-          gpg-passphrase: ${{ secrets.GPG_PASSPHRASE }}
           cache: maven
 
       - name: Verify version consistency
@@ -35,17 +38,40 @@ jobs:
             echo "ERROR: Version mismatch between pom.xml ($POM_VERSION) and Version.java ($JAVA_VERSION)"
             exit 1
           fi
+          # The japicmp gate must compare against the previous release, never
+          # the one being published (a self-comparison is vacuous).
+          JAPICMP_OLD=$(mvn help:evaluate -Dexpression=japicmp.oldVersion -q -DforceStdout)
+          echo "japicmp.oldVersion: $JAPICMP_OLD"
+          if [ "$JAPICMP_OLD" = "$POM_VERSION" ]; then
+            echo "ERROR: japicmp.oldVersion equals the version being released; bump it to the previous release"
+            exit 1
+          fi
 
       - name: Build
         run: make build
 
-      - name: Install Spice (https://install.spiceai.org)
+      # Release-context install: pinned version, checksum-verified — the
+      # publish pipeline must never execute mutable remote code (the dev CI
+      # convenience installer is not used here). Bump the version and digests
+      # together when updating the runtime under test.
+      - name: Install Spice (pinned + checksum-verified)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SPICE_VERSION: v2.1.2
+          SPICE_CLI_SHA256: 0a4ced62280ddd17c895a6e2ac1d6007d581a4672cd147f24cf166ec2c4565d9
+          SPICED_SHA256: bcafacedd24148d97b71cecb482812ced21d26dbbeaed195075fb91bc07c9242
         run: |
-          curl https://install.spiceai.org | /bin/bash
+          set -euo pipefail
+          mkdir -p "$HOME/.spice/bin"
+          curl -fsSL --retry 5 --retry-delay 10 -o spice_cli.tar.gz \
+            "https://github.com/spiceai/spiceai/releases/download/${SPICE_VERSION}/spice_linux_x86_64.tar.gz"
+          echo "${SPICE_CLI_SHA256}  spice_cli.tar.gz" | sha256sum -c -
+          tar -xzf spice_cli.tar.gz -C "$HOME/.spice/bin"
+          curl -fsSL --retry 5 --retry-delay 10 -o spiced_rt.tar.gz \
+            "https://github.com/spiceai/spiceai/releases/download/${SPICE_VERSION}/spiced_linux_x86_64.tar.gz"
+          echo "${SPICED_SHA256}  spiced_rt.tar.gz" | sha256sum -c -
+          tar -xzf spiced_rt.tar.gz -C "$HOME/.spice/bin"
+          "$HOME/.spice/bin/spice" version
           echo "$HOME/.spice/bin" >> $GITHUB_PATH
-          $HOME/.spice/bin/spice install
 
       - name: Init and start spice app
         run: |
@@ -73,6 +99,13 @@ jobs:
         run: make test
         env:
           API_KEY: ${{ secrets.SPICE_CLOUD_QUICKSTART_API_KEY }}
+
+      # Import the signing key only now — after the runtime download and the
+      # test run — so no earlier step ever executes with the key in the keyring.
+      - name: Import GPG signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: echo "$GPG_PRIVATE_KEY" | gpg --batch --import
 
       - name: Publish to Maven Central
         env:
