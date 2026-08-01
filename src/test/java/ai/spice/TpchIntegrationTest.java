@@ -48,8 +48,8 @@ public class TpchIntegrationTest extends TestCase {
     private SpiceClient client;
     private boolean tpchAvailable = true;
 
-    // Availability is probed once for the whole class (with retries disabled)
-    // so a missing local runtime doesn't cost retry backoff per test method.
+    // Availability is probed once for the whole class (with a single retry)
+    // so a missing local runtime doesn't cost full retry backoff per test method.
     private static volatile Boolean tpchAvailableCached;
 
     @Override
@@ -58,7 +58,7 @@ public class TpchIntegrationTest extends TestCase {
         if (tpchAvailableCached == null) {
             synchronized (TpchIntegrationTest.class) {
                 if (tpchAvailableCached == null) {
-                    try (SpiceClient probe = SpiceClient.builder().withMaxRetries(0).build();
+                    try (SpiceClient probe = SpiceClient.builder().withMaxRetries(1).build();
                             FlightStream stream = probe.query("SELECT c_custkey FROM tpch.customer LIMIT 1")) {
                         stream.next();
                         tpchAvailableCached = Boolean.TRUE;
