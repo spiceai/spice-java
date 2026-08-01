@@ -55,6 +55,13 @@ public class SoakTest extends TestCase {
 
     private static final int WORKERS = 4;
     private static final long RESET_INTERVAL_SECONDS = 120;
+    /**
+     * Latency samples retained per minute. At ~9k ops/s a 30-minute soak would
+     * otherwise retain ~16M boxed samples and risk exhausting the heap before
+     * the assertions run; a bounded prefix per minute is ample for p99
+     * stability comparison.
+     */
+    private static final int MAX_SAMPLES_PER_MINUTE = 5_000;
 
     public void testSoak() throws Exception {
         long soakSeconds = Long.parseLong(System.getenv().getOrDefault("SPICE_SOAK_SECONDS", "0"));
@@ -66,9 +73,12 @@ public class SoakTest extends TestCase {
         String paramSql = "SELECT * FROM " + dataset + " WHERE $1 = 1 LIMIT 10";
 
         final AtomicLong operations = new AtomicLong();
+        final AtomicLong dataOperations = new AtomicLong();
+        final AtomicLong rowsRead = new AtomicLong();
         final ConcurrentLinkedQueue<String> errors = new ConcurrentLinkedQueue<>();
-        // Latency samples in micros, bucketed by minute of the run.
+        // Latency samples in micros, bucketed by minute of the run (bounded).
         final Map<Long, ConcurrentLinkedQueue<Long>> latenciesByMinute = new ConcurrentHashMap<>();
+        final Map<Long, AtomicInteger> samplesPerMinute = new ConcurrentHashMap<>();
 
         final long startNanos = System.nanoTime();
         final long deadlineNanos = startNanos + TimeUnit.SECONDS.toNanos(soakSeconds);
@@ -102,15 +112,17 @@ public class SoakTest extends TestCase {
                                 if (kind < 16) {
                                     try (FlightStream stream = client.query(querySql)) {
                                         while (stream.next()) {
-                                            // consume
+                                            rowsRead.addAndGet(stream.getRoot().getRowCount());
                                         }
                                     }
+                                    dataOperations.incrementAndGet();
                                 } else if (kind < 19) {
                                     try (ArrowReader reader = client.queryWithParams(paramSql, 1L)) {
                                         while (reader.loadNextBatch()) {
-                                            // consume
+                                            rowsRead.addAndGet(reader.getVectorSchemaRoot().getRowCount());
                                         }
                                     }
+                                    dataOperations.incrementAndGet();
                                 } else {
                                     if (!client.isHealthy() || !client.isReady()) {
                                         errors.add("health probe reported unhealthy mid-soak");
@@ -118,9 +130,12 @@ public class SoakTest extends TestCase {
                                 }
                                 operations.incrementAndGet();
                                 long minute = TimeUnit.NANOSECONDS.toMinutes(opStart - startNanos);
-                                latenciesByMinute
-                                        .computeIfAbsent(minute, m -> new ConcurrentLinkedQueue<>())
-                                        .add((System.nanoTime() - opStart) / 1_000);
+                                if (samplesPerMinute.computeIfAbsent(minute, m -> new AtomicInteger())
+                                        .incrementAndGet() <= MAX_SAMPLES_PER_MINUTE) {
+                                    latenciesByMinute
+                                            .computeIfAbsent(minute, m -> new ConcurrentLinkedQueue<>())
+                                            .add((System.nanoTime() - opStart) / 1_000);
+                                }
                             } catch (Throwable t) {
                                 errors.add(t.getClass().getSimpleName() + ": " + t.getMessage());
                                 if (errors.size() > 20) {
@@ -156,6 +171,11 @@ public class SoakTest extends TestCase {
 
             assertTrue("soak must complete with zero errors, got " + errors.size()
                     + " — first: " + errors.peek(), errors.isEmpty());
+            // Guard against a silent-empty-results regression: every data
+            // operation queries with a LIMIT >= 10 against a populated dataset.
+            System.out.printf("[soak] data-ops=%d rows-read=%d%n", dataOperations.get(), rowsRead.get());
+            assertTrue("every data operation must return rows: ops=" + dataOperations.get()
+                    + " rows=" + rowsRead.get(), rowsRead.get() >= dataOperations.get() * 10);
             assertTailLatencyStable(latenciesByMinute);
         }
         // Reaching here means close() did not throw: no Arrow buffers leaked

@@ -308,12 +308,13 @@ jobs:
           restore-keys: |
             dependency-check-data-${{ runner.os }}-
 
-      - name: OWASP Dependency-Check
-        # NVD API is unreliable (429s, slow without an API key). The step-level
-        # timeout keeps a slow NVD refresh from hitting the job-level timeout,
-        # which would cancel the whole job and bypass continue-on-error.
+      # Split so network flakiness and the security gate can't mask each other:
+      # the NVD data refresh may fail or time out without blocking CI, but the
+      # actual vulnerability check below runs offline against whatever data is
+      # cached and FAILS the build on real CVSS >= 7 findings.
+      - name: OWASP NVD data update (best-effort)
         continue-on-error: true
-        timeout-minutes: 20
+        timeout-minutes: 15
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
@@ -321,7 +322,11 @@ jobs:
           if [ -n "$NVD_API_KEY" ]; then
             EXTRA="-DnvdApiKey=$NVD_API_KEY"
           fi
-          mvn dependency-check:check -B $EXTRA
+          mvn dependency-check:update-only -B $EXTRA
+
+      - name: OWASP Dependency-Check (gating)
+        timeout-minutes: 10
+        run: mvn dependency-check:check -B -DautoUpdate=false
 
       - name: Upload dependency-check report
         if: always()

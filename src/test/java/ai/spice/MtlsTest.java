@@ -50,8 +50,11 @@ public class MtlsTest extends TestCase {
     }
 
     private static SpiceClientBuilder clientFor(TestFlightSqlServer server) throws Exception {
+        // 127.0.0.1 on both sides (matching the server bind and the cert SAN):
+        // dialing "localhost" may try ::1 first and fail with connection-refused
+        // before any TLS handshake happens.
         return SpiceClient.builder()
-                .withFlightAddress(new URI("grpc+tls://localhost:" + server.getPort()))
+                .withFlightAddress(new URI("grpc+tls://127.0.0.1:" + server.getPort()))
                 .withMaxRetries(0);
     }
 
@@ -97,8 +100,8 @@ public class MtlsTest extends TestCase {
             try {
                 client.query("SELECT 1");
                 fail("Expected the TLS handshake to be rejected without a client certificate");
-            } catch (ExecutionException expected) {
-                // Clean, classifiable transport failure — not a hang or an NPE.
+            } catch (ExecutionException e) {
+                assertTlsFailure(e);
             }
         }
     }
@@ -112,9 +115,29 @@ public class MtlsTest extends TestCase {
             try {
                 client.query("SELECT 1");
                 fail("Expected certificate verification to fail against an untrusted CA");
-            } catch (ExecutionException expected) {
-                // expected
+            } catch (ExecutionException e) {
+                assertTlsFailure(e);
             }
         }
+    }
+
+    /**
+     * The negative tests must fail *because of TLS* — an unrelated transport
+     * or query error passing for a certificate rejection would mask a broken
+     * verification path. Walks the cause chain for TLS evidence.
+     */
+    private static void assertTlsFailure(Throwable failure) {
+        StringBuilder chain = new StringBuilder();
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof javax.net.ssl.SSLException) {
+                return;
+            }
+            chain.append(cause.getClass().getName()).append(": ").append(cause.getMessage()).append(" <- ");
+            String message = cause.getMessage() == null ? "" : cause.getMessage().toLowerCase();
+            if (message.contains("ssl") || message.contains("certificate") || message.contains("handshake")) {
+                return;
+            }
+        }
+        fail("Expected a TLS/certificate failure, but the cause chain shows none: " + chain);
     }
 }

@@ -64,8 +64,18 @@ public class ChaosE2ETest extends TestCase {
 
     private SpicedProcess spiced;
 
+    /**
+     * Skips silently when chaos testing isn't requested, but fails loudly when
+     * it IS requested and no spiced binary can be found — otherwise a broken
+     * CI install would turn the whole chaos suite into a passing no-op.
+     */
     private static boolean chaosEnabled() {
-        return "1".equals(System.getenv("SPICE_E2E_CHAOS")) && SpicedProcess.findBinary() != null;
+        if (!"1".equals(System.getenv("SPICE_E2E_CHAOS"))) {
+            return false;
+        }
+        assertNotNull("SPICE_E2E_CHAOS=1 but no spiced binary found (set SPICED_BIN or install the Spice CLI)",
+                SpicedProcess.findBinary());
+        return true;
     }
 
     @Override
@@ -97,7 +107,13 @@ public class ChaosE2ETest extends TestCase {
 
     /** Runs the callable with a hang guard so a broken SDK cannot wedge the suite. */
     private static <T> T guarded(Callable<T> callable) throws Exception {
-        ExecutorService executor = Executors.newSingleThreadExecutor();
+        // Daemon threads: if the guarded call ignores interruption (the very
+        // regression being hunted), the stuck worker must not keep the JVM alive.
+        ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "chaos-guard");
+            thread.setDaemon(true);
+            return thread;
+        });
         try {
             Future<T> future = executor.submit(callable);
             try {
@@ -175,23 +191,33 @@ public class ChaosE2ETest extends TestCase {
 
             spiced.kill();
             // Bring the runtime back concurrently, inside the retry window.
+            // The restarter is always joined (finally) so a failing assertion
+            // can't leave it racing teardown, and its failure is surfaced.
+            final java.util.concurrent.atomic.AtomicReference<Exception> restartFailure =
+                    new java.util.concurrent.atomic.AtomicReference<>();
             Thread restarter = new Thread(() -> {
                 try {
                     Thread.sleep(1_500);
                     spiced = spiced.restart();
                 } catch (Exception e) {
-                    throw new RuntimeException(e);
+                    restartFailure.set(e);
                 }
-            });
+            }, "chaos-restarter");
             restarter.start();
-
-            long start = System.nanoTime();
-            assertEquals("query issued during downtime should succeed via retries",
-                    1, (long) guarded(() -> countRows(client, "SELECT 1")));
-            long elapsedSeconds = (System.nanoTime() - start) / 1_000_000_000L;
-            assertTrue("recovery should happen within the retry budget, took " + elapsedSeconds + "s",
-                    elapsedSeconds < 30);
-            restarter.join(TimeUnit.SECONDS.toMillis(30));
+            try {
+                long start = System.nanoTime();
+                assertEquals("query issued during downtime should succeed via retries",
+                        1, (long) guarded(() -> countRows(client, "SELECT 1")));
+                long elapsedSeconds = (System.nanoTime() - start) / 1_000_000_000L;
+                assertTrue("recovery should happen within the retry budget, took " + elapsedSeconds + "s",
+                        elapsedSeconds < 30);
+            } finally {
+                restarter.join(TimeUnit.SECONDS.toMillis(90));
+                assertFalse("restarter thread must finish before teardown", restarter.isAlive());
+            }
+            if (restartFailure.get() != null) {
+                throw restartFailure.get();
+            }
         }
     }
 
@@ -310,16 +336,30 @@ public class ChaosE2ETest extends TestCase {
         }
 
         static SpicedProcess start() throws Exception {
-            Path workspace = Files.createTempDirectory("spice-chaos");
-            Files.writeString(workspace.resolve("spicepod.yaml"),
-                    "version: v1\nkind: Spicepod\nname: chaos\n", StandardCharsets.UTF_8);
-            SpicedProcess spiced = new SpicedProcess(
-                    workspace, freePort(), freePort(), freePort());
-            spiced.launch();
-            return spiced;
+            // Ephemeral ports are released before spiced binds them, so a
+            // rare port steal is possible; retry with fresh ports.
+            Exception lastFailure = null;
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                Path workspace = Files.createTempDirectory("spice-chaos");
+                Files.writeString(workspace.resolve("spicepod.yaml"),
+                        "version: v1\nkind: Spicepod\nname: chaos\n", StandardCharsets.UTF_8);
+                SpicedProcess spiced = new SpicedProcess(
+                        workspace, freePort(), freePort(), freePort());
+                try {
+                    spiced.launch();
+                    return spiced;
+                } catch (Exception e) {
+                    lastFailure = e;
+                }
+            }
+            throw lastFailure;
         }
 
-        /** Starts a fresh process on the same ports and workspace. */
+        /**
+         * Starts a fresh process on the same ports and workspace — clients
+         * must be able to reconnect to the same address, as with a crashed
+         * server replaced behind a stable VIP. No port retry is possible here.
+         */
         SpicedProcess restart() throws Exception {
             SpicedProcess fresh = new SpicedProcess(workspace, httpPort, flightPort, metricsPort);
             fresh.launch();
@@ -336,7 +376,17 @@ public class ChaosE2ETest extends TestCase {
             builder.redirectErrorStream(true);
             builder.redirectOutput(workspace.resolve("spiced.log").toFile());
             process = builder.start();
-            waitUntilHealthy();
+            try {
+                waitUntilHealthy();
+            } catch (Exception startupFailure) {
+                // Never orphan a half-started process the caller has no handle to.
+                try {
+                    destroy();
+                } catch (Exception cleanup) {
+                    startupFailure.addSuppressed(cleanup);
+                }
+                throw startupFailure;
+            }
         }
 
         private void waitUntilHealthy() throws Exception {
@@ -370,7 +420,10 @@ public class ChaosE2ETest extends TestCase {
         /** SIGKILL — an abrupt crash, no graceful shutdown. */
         void kill() throws Exception {
             process.destroyForcibly();
-            process.waitFor(10, TimeUnit.SECONDS);
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException(
+                        "spiced pid " + process.pid() + " did not exit within 10s of SIGKILL");
+            }
         }
 
         /** SIGSTOP — the process is alive but completely unresponsive. */

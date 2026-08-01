@@ -106,19 +106,28 @@ public class PerfBenchmarkTest extends TestCase {
 
     public void testBenchmarkPlainQuery() throws Exception {
         try (SpiceClient client = SpiceClient.builder().withFlightAddress(server.flightUri()).build()) {
+            final long expectedRows = server.expectedTotalRows();
             Callable<?> op = () -> {
                 try (FlightStream stream = client.query("SELECT * FROM bench")) {
-                    return LocalFlightServerTest.countRows(stream);
+                    long rows = LocalFlightServerTest.countRows(stream);
+                    // Guard the measurement's meaning: a regression that drops
+                    // results would otherwise publish an "improved" latency.
+                    if (rows != expectedRows) {
+                        throw new AssertionError("expected " + expectedRows + " rows, got " + rows);
+                    }
+                    return rows;
                 }
             };
             measure(WARMUP_ITERATIONS, op);
             long getFlightInfoBefore = server.getFlightInfoCalls.get();
+            long doGetBefore = server.doGetCalls.get();
             long[] samples = measure(MEASURED_ITERATIONS, op);
             System.out.println("[bench] " + stats("query()", samples));
             recordBench("query() p50", "us", p50Micros(samples));
 
             // The plain query path is exactly 2 RPCs: GetFlightInfo + DoGet.
             assertEquals(MEASURED_ITERATIONS, server.getFlightInfoCalls.get() - getFlightInfoBefore);
+            assertEquals(MEASURED_ITERATIONS, server.doGetCalls.get() - doGetBefore);
         }
     }
 
@@ -130,14 +139,23 @@ public class PerfBenchmarkTest extends TestCase {
                         .withFlightAddress(server.flightUri())
                         .withPreparedStatementCacheSize(0)
                         .build()) {
+            final long expectedRows = server.expectedTotalRows();
             Callable<?> cachedOp = () -> {
                 try (ArrowReader reader = cachedClient.queryWithParams(SQL, 5L)) {
-                    return LocalFlightServerTest.countRows(reader);
+                    long rows = LocalFlightServerTest.countRows(reader);
+                    if (rows != expectedRows) {
+                        throw new AssertionError("expected " + expectedRows + " rows, got " + rows);
+                    }
+                    return rows;
                 }
             };
             Callable<?> uncachedOp = () -> {
                 try (ArrowReader reader = uncachedClient.queryWithParams(SQL, 5L)) {
-                    return LocalFlightServerTest.countRows(reader);
+                    long rows = LocalFlightServerTest.countRows(reader);
+                    if (rows != expectedRows) {
+                        throw new AssertionError("expected " + expectedRows + " rows, got " + rows);
+                    }
+                    return rows;
                 }
             };
 

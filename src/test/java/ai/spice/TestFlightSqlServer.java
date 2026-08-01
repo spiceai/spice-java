@@ -128,8 +128,11 @@ final class TestFlightSqlServer implements AutoCloseable {
     private TestFlightSqlServer(String expectedUser, String expectedPassword,
             TestCerts certs, boolean requireClientCert) throws Exception {
         this.allocator = new RootAllocator(Long.MAX_VALUE);
+        // TLS tests bind and dial 127.0.0.1 explicitly: "localhost" can resolve
+        // to ::1 first, and a connection-refused there would let negative TLS
+        // tests pass without ever reaching the handshake under test.
         Location location = certs != null
-                ? Location.forGrpcTls("localhost", 0)
+                ? Location.forGrpcTls("127.0.0.1", 0)
                 : Location.forGrpcInsecure("localhost", 0);
         FlightServer.Builder builder = FlightServer.builder(allocator, location, new Producer());
         if (certs != null) {

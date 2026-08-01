@@ -55,15 +55,16 @@ jobs:
                 enabled: true
           YAML
           spice run &> spice.log &
-          # Wait for readiness (dataset load) rather than a fixed sleep.
+          # Wait for readiness (dataset load) rather than a fixed sleep. The
+          # curl timeouts keep a stalled endpoint from wedging the loop.
           for i in $(seq 1 120); do
-            if [ "$(curl -s http://localhost:8090/v1/ready)" = "ready" ]; then
+            if [ "$(curl -s -m 5 http://localhost:8090/v1/ready)" = "ready" ]; then
               echo "runtime ready after ${i}s"
               break
             fi
             sleep 1
           done
-          [ "$(curl -s http://localhost:8090/v1/ready)" = "ready" ]
+          [ "$(curl -s -m 5 http://localhost:8090/v1/ready)" = "ready" ]
 
       - name: Run soak
         env:
@@ -136,8 +137,14 @@ jobs:
           BENCH_JSON: ${{ github.workspace }}/bench.json
         run: mvn test -B -Dtest=PerfBenchmarkTest -DfailIfNoTests=true
 
+      # Pinned to a full commit SHA (v1.22.1): this third-party action receives
+      # a repository-write token, so a mutable tag reference is not acceptable.
+      # Data is committed to the gh-pages branch (created ahead of first run).
+      # Note: pushes made with GITHUB_TOKEN do not trigger a Pages build — the
+      # trend data always accumulates in-branch; serving the dashboard requires
+      # enabling Pages for gh-pages in repo settings.
       - name: Publish benchmark trend
-        uses: benchmark-action/github-action-benchmark@v1
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
           name: spice-java in-process benchmarks
           tool: customSmallerIsBetter
