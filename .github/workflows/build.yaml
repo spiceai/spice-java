@@ -192,10 +192,17 @@ jobs:
             dependency-check-data-${{ runner.os }}-
 
       # Split so network flakiness and the security gate can't mask each other:
-      # the NVD data refresh may fail or time out without blocking CI, but the
-      # actual vulnerability check below runs offline against the cached data
-      # and FAILS the build on real CVSS >= 7 findings.
+      # the NVD data refresh may fail or time out without blocking CI, but when
+      # it completes, the check below runs offline against that data and FAILS
+      # the build on real CVSS >= 7 findings.
+      #
+      # The update is incremental and resumable: even a timed-out attempt makes
+      # progress that actions/cache persists (the job still succeeds via the
+      # skip path below), so cold caches converge to a warm one across runs.
+      # Adding the NVD_API_KEY secret makes the update fast and the gate
+      # effectively always-on.
       - name: OWASP NVD data update (best-effort)
+        id: nvd-update
         continue-on-error: true
         timeout-minutes: 15
         env:
@@ -207,19 +214,17 @@ jobs:
           fi
           mvn dependency-check:update-only -B $EXTRA
 
-      # With no local database at all (cold cache AND a failed update),
-      # dependency-check forces a full download regardless of autoUpdate=false
-      # and times out. Gate only when data exists; warn loudly otherwise.
-      # Adding the NVD_API_KEY secret makes the update fast and the gate
-      # effectively always-on.
-      - name: OWASP Dependency-Check (gating when data present)
+      # Gate only on a completed update: a partial database makes
+      # dependency-check force a full re-download regardless of
+      # autoUpdate=false, burning the timeout.
+      - name: OWASP Dependency-Check (gating)
+        if: steps.nvd-update.outcome == 'success'
         timeout-minutes: 10
-        run: |
-          if find ~/.m2/repository/org/owasp/dependency-check-data -name "*.mv.db" 2>/dev/null | grep -q .; then
-            mvn dependency-check:check -B -DautoUpdate=false
-          else
-            echo "::warning::NVD data unavailable (cold cache and update failed) — vulnerability gate skipped this run"
-          fi
+        run: mvn dependency-check:check -B -DautoUpdate=false
+
+      - name: OWASP gate skipped notice
+        if: steps.nvd-update.outcome != 'success'
+        run: echo "::warning::NVD data update did not complete — vulnerability gate skipped this run (add the NVD_API_KEY secret to make it always-on)"
 
       - name: Upload dependency-check report
         if: always()
