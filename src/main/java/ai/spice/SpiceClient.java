@@ -1523,6 +1523,77 @@ public class SpiceClient implements AutoCloseable {
     }
 
     /**
+     * Finds documents similar to {@code request}'s text by calling the
+     * runtime's {@code /v1/search} endpoint.
+     *
+     * <p>
+     * This runs against datasets that have an embedding column and a loaded
+     * embedding model. See
+     * <a href="https://docs.spiceai.org/features/search-and-retrieval">the
+     * search and retrieval docs</a> for how to configure them.
+     *
+     * @param request the search request
+     * @return the search response
+     * @throws ExecutionException if there is an error performing the search
+     */
+    public SearchResponse search(SearchRequest request) throws ExecutionException {
+        if (request == null) {
+            throw new IllegalArgumentException("No search request provided");
+        }
+        if (Strings.isNullOrEmpty(request.getText())) {
+            throw new IllegalArgumentException("SearchRequest.text is required and must be a non-empty string");
+        }
+        if (request.getLimit() != null && request.getLimit() < 1) {
+            throw new IllegalArgumentException("SearchRequest.limit must be greater than 0, got " + request.getLimit());
+        }
+
+        logger.debug("Performing search: {}", request.getText());
+        try {
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(new URI(String.format("%s/v1/search", this.httpAddress)))
+                    .timeout(HTTP_REQUEST_TIMEOUT)
+                    .header("Content-Type", "application/json")
+                    .header("X-Spice-User-Agent", Config.getUserAgent());
+            if (!Strings.isNullOrEmpty(this.apiKey)) {
+                builder = builder.header("X-API-Key", this.apiKey);
+            }
+            builder = builder.POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(request)));
+
+            HttpRequest httpRequest = builder.build();
+            HttpResponse<String> response = httpClient().send(httpRequest, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                logger.error("Search failed - statusCode={}, response={}", response.statusCode(), response.body());
+                // The runtime explains search failures in a plain-text body (e.g. "No data
+                // sources provided"); surface it rather than only the status code.
+                throw new ExecutionException(
+                        String.format("Failed to perform search. Status Code: %d, Response: %s",
+                                response.statusCode(), response.body()),
+                        null);
+            }
+
+            try {
+                return GSON.fromJson(response.body(), SearchResponse.class);
+            } catch (JsonSyntaxException e) {
+                throw new ExecutionException("The runtime returned a malformed search response", e);
+            }
+        } catch (ExecutionException e) {
+            // no need to wrap ExecutionException
+            throw e;
+        } catch (ConnectException err) {
+            logger.error("Cannot connect to Spice runtime at {}: {}", this.httpAddress, err.getMessage());
+            throw new ExecutionException(
+                    String.format("The Spice runtime is unavailable at %s. Is it running?", this.httpAddress), err);
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            throw new ExecutionException("Interrupted while performing search", err);
+        } catch (Exception err) {
+            logger.error("Search failed: {}", err.getMessage());
+            throw new ExecutionException("Failed to perform search due to error: " + err.toString(), err);
+        }
+    }
+
+    /**
      * Refreshes an accelerated dataset using the configured dataset acceleration
      * settings
      *

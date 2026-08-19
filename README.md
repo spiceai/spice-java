@@ -415,6 +415,29 @@ for (ConnectionDetails connection : client.runtimeStatus()) {
 `REFRESHING`, `SHUTTING_DOWN`, or `NOT_LOADED`. A status a newer runtime introduces maps to
 `UNKNOWN` rather than failing; `getRawStatus()` returns it verbatim.
 
+#### Search
+
+Use `search()` to find documents similar to a piece of text via the runtime's
+`/v1/search` endpoint. This runs against datasets with an embedding column and a
+loaded embedding model — see the
+[search and retrieval docs](https://docs.spiceai.org/features/search-and-retrieval) for
+how to configure them. Supplying `withKeywords(...)` adds a lexical pass, which the
+runtime blends with the vector scores into a hybrid ranking.
+
+```java
+SpiceClient client = SpiceClient.builder()
+    ..
+    .build();
+
+SearchResponse response = client.search(new SearchRequest("food safety violations")
+    .withDatasets(Arrays.asList("restaurant_inspections"))
+    .withLimit(5));
+
+for (SearchMatch match : response.getResults()) {
+    System.out.printf("%s (score=%.3f)%n", match.getDataset(), match.getScore());
+}
+```
+
 ### Logging
 
 The SDK uses SLF4J for logging, allowing you to plug in your preferred logging implementation (Logback, Log4j2, java.util.logging, etc.).
