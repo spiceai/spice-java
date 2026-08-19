@@ -47,6 +47,7 @@ public class ActiveQueriesTest extends TestCase {
 
     private HttpServer server;
     private SpiceClient client;
+    private TestFlightSqlServer flightServer;
     private final AtomicReference<String> lastMethod = new AtomicReference<>();
     private final AtomicReference<String> lastPath = new AtomicReference<>();
     private final AtomicReference<String> lastAcceptHeader = new AtomicReference<>();
@@ -76,7 +77,15 @@ public class ActiveQueriesTest extends TestCase {
         URI httpAddress = new URI("http://127.0.0.1:" + this.server.getAddress().getPort());
         SpiceClientBuilder builder = SpiceClient.builder().withHttpAddress(httpAddress);
         if (apiKey != null) {
-            builder = builder.withApiKey(apiKey);
+            // withApiKey() makes the constructor perform a real Flight handshake, so an
+            // authenticated client needs a real (test) Flight endpoint to handshake against —
+            // these tests only exercise the HTTP path, but SpiceClient always builds its Flight
+            // channels eagerly. Without this, the handshake targets the builder's default flight
+            // address, where nothing is listening; that failed unpredictably by platform
+            // (reliably on Windows CI, only sometimes on Linux/macOS).
+            String appId = apiKey.split("\\|")[0];
+            this.flightServer = new TestFlightSqlServer(appId, apiKey);
+            builder = builder.withFlightAddress(this.flightServer.flightUri()).withApiKey(apiKey);
         }
         return builder.build();
     }
@@ -90,6 +99,10 @@ public class ActiveQueriesTest extends TestCase {
         if (this.server != null) {
             this.server.stop(0);
             this.server = null;
+        }
+        if (this.flightServer != null) {
+            this.flightServer.close();
+            this.flightServer = null;
         }
         super.tearDown();
     }
