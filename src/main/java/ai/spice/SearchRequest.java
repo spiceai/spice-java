@@ -22,6 +22,8 @@ SOFTWARE.
 
 package ai.spice;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import com.google.gson.annotations.SerializedName;
@@ -71,7 +73,7 @@ public class SearchRequest {
      * @return this request
      */
     public SearchRequest withDatasets(List<String> datasets) {
-        this.datasets = datasets;
+        this.datasets = datasets == null ? null : new ArrayList<>(datasets);
         return this;
     }
 
@@ -107,7 +109,7 @@ public class SearchRequest {
      * @return this request
      */
     public SearchRequest withAdditionalColumns(List<String> additionalColumns) {
-        this.additionalColumns = additionalColumns;
+        this.additionalColumns = additionalColumns == null ? null : new ArrayList<>(additionalColumns);
         return this;
     }
 
@@ -118,7 +120,7 @@ public class SearchRequest {
      * @return this request
      */
     public SearchRequest withKeywords(List<String> keywords) {
-        this.keywords = keywords;
+        this.keywords = keywords == null ? null : new ArrayList<>(keywords);
         return this;
     }
 
@@ -127,7 +129,7 @@ public class SearchRequest {
     }
 
     public List<String> getDatasets() {
-        return this.datasets;
+        return this.datasets == null ? null : Collections.unmodifiableList(this.datasets);
     }
 
     public Integer getLimit() {
@@ -139,10 +141,10 @@ public class SearchRequest {
     }
 
     public List<String> getAdditionalColumns() {
-        return this.additionalColumns;
+        return this.additionalColumns == null ? null : Collections.unmodifiableList(this.additionalColumns);
     }
 
     public List<String> getKeywords() {
-        return this.keywords;
+        return this.keywords == null ? null : Collections.unmodifiableList(this.keywords);
     }
 }

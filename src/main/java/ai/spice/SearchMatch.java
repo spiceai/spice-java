@@ -22,10 +22,18 @@ SOFTWARE.
 
 package ai.spice;
 
+import java.lang.reflect.Type;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.google.gson.JsonDeserializationContext;
+import com.google.gson.JsonDeserializer;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParseException;
+import com.google.gson.annotations.JsonAdapter;
 import com.google.gson.annotations.SerializedName;
 
 /**
@@ -45,7 +53,12 @@ public class SearchMatch {
     @SerializedName("_score")
     private double score;
 
+    // Spice 2.0 changed each entry to always be an array (a column can
+    // contribute several chunks to a match); before that, a single match
+    // serialized as a bare scalar. This API isn't documented as 2.0-only, so
+    // accept both shapes rather than failing on the older one.
     @SerializedName("matches")
+    @JsonAdapter(MatchesDeserializer.class)
     private Map<String, List<Object>> matches;
 
     @SerializedName("primary_key")
@@ -117,5 +130,37 @@ public class SearchMatch {
      */
     public Map<String, Object> getMetadata() {
         return this.metadata == null ? Collections.emptyMap() : this.metadata;
+    }
+
+    /**
+     * Normalizes a {@code matches} entry to a list regardless of whether the
+     * runtime serialized it as an array (Spice 2.0+) or a bare scalar (older
+     * runtimes).
+     */
+    static final class MatchesDeserializer implements JsonDeserializer<Map<String, List<Object>>> {
+        @Override
+        public Map<String, List<Object>> deserialize(JsonElement json, Type typeOfT,
+                JsonDeserializationContext context) throws JsonParseException {
+            if (json == null || json.isJsonNull()) {
+                return null;
+            }
+            if (!json.isJsonObject()) {
+                throw new JsonParseException("Expected a JSON object for \"matches\", got: " + json);
+            }
+            Map<String, List<Object>> result = new LinkedHashMap<>();
+            for (Map.Entry<String, JsonElement> entry : json.getAsJsonObject().entrySet()) {
+                JsonElement value = entry.getValue();
+                if (value.isJsonArray()) {
+                    List<Object> values = new ArrayList<>();
+                    for (JsonElement element : value.getAsJsonArray()) {
+                        values.add(context.deserialize(element, Object.class));
+                    }
+                    result.put(entry.getKey(), values);
+                } else {
+                    result.put(entry.getKey(), Collections.singletonList(context.deserialize(value, Object.class)));
+                }
+            }
+            return result;
+        }
     }
 }

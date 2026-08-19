@@ -1529,7 +1529,7 @@ public class SpiceClient implements AutoCloseable {
      * <p>
      * This runs against datasets that have an embedding column and a loaded
      * embedding model. See
-     * <a href="https://docs.spiceai.org/features/search-and-retrieval">the
+     * <a href="https://docs.spice.ai/features/search-and-retrieval">the
      * search and retrieval docs</a> for how to configure them.
      *
      * @param request the search request
@@ -1549,8 +1549,11 @@ public class SpiceClient implements AutoCloseable {
 
         logger.debug("Performing search: {}", request.getText());
         try {
+            // Resolve rather than concatenate: a base address with a trailing slash
+            // would otherwise produce "http://host:8090//v1/search".
+            URI uri = this.httpAddress.resolve("/v1/search");
             HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .uri(new URI(String.format("%s/v1/search", this.httpAddress)))
+                    .uri(uri)
                     .timeout(HTTP_REQUEST_TIMEOUT)
                     .header("Content-Type", "application/json")
                     .header("X-Spice-User-Agent", Config.getUserAgent());

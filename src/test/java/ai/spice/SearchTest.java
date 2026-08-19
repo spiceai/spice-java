@@ -190,6 +190,36 @@ public class SearchTest extends TestCase {
         }
     }
 
+    public void testSearchDecodesLegacyScalarMatchShape() throws Exception {
+        // Runtimes before Spice 2.0 serialized a single match as a bare scalar
+        // rather than a one-element array.
+        responseBody = "{"
+                + "\"results\":[{"
+                + "\"dataset\":\"taxi_trips\","
+                + "\"_score\":0.87,"
+                + "\"matches\":{\"description\":\"a single match\"}"
+                + "}],"
+                + "\"duration_ms\":1"
+                + "}";
+        try (SpiceClient client = newClient()) {
+            SearchMatch match = client.search(new SearchRequest("hello")).getResults().get(0);
+            List<Object> description = match.getMatches().get("description");
+            assertEquals(1, description.size());
+            assertEquals("a single match", description.get(0));
+        }
+    }
+
+    public void testSearchResolvesTrailingSlashBase() throws Exception {
+        responseBody = "{\"results\":[],\"duration_ms\":0}";
+        try (SpiceClient client = SpiceClient.builder()
+                .withHttpAddress(new URI("http://localhost:" + httpServer.getAddress().getPort() + "/"))
+                .build()) {
+            client.search(new SearchRequest("hello"));
+            assertEquals("a trailing slash on the base address must not double up",
+                    "/v1/search", lastPath.get());
+        }
+    }
+
     public void testSearchMatchWithNoMapsReturnsEmptyNotNull() throws Exception {
         responseBody = "{\"results\":[{\"dataset\":\"taxi_trips\",\"_score\":0.5,\"matches\":{}}],\"duration_ms\":1}";
         try (SpiceClient client = newClient()) {

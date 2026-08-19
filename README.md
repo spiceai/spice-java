@@ -420,7 +420,7 @@ for (ConnectionDetails connection : client.runtimeStatus()) {
 Use `search()` to find documents similar to a piece of text via the runtime's
 `/v1/search` endpoint. This runs against datasets with an embedding column and a
 loaded embedding model — see the
-[search and retrieval docs](https://docs.spiceai.org/features/search-and-retrieval) for
+[search and retrieval docs](https://docs.spice.ai/features/search-and-retrieval) for
 how to configure them. Supplying `withKeywords(...)` adds a lexical pass, which the
 runtime blends with the vector scores into a hybrid ranking.
 
