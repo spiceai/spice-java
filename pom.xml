@@ -4,7 +4,7 @@
     <groupId>ai.spice</groupId>
     <artifactId>spiceai</artifactId>
     <packaging>jar</packaging>
-    <version>0.7.0</version>
+    <version>0.8.0</version>
     <name>Java Spice SDK</name>
     <url>https://github.com/spiceai/spice-java/</url>
     <description>Spice provides a unified SQL query interface and portable runtime to locally materialize, accelerate, and query datasets from any database, data warehouse, or data lake.</description>
@@ -45,7 +45,19 @@
         <argLine></argLine>
         <!-- The last published release, which the japicmp API-compatibility
              gate compares against. Bump when releasing; the publish workflow
-             fails if this still equals the version being released. -->
+             fails if this still equals the version being released.
+
+             Deliberately still 0.6.0, not 0.7.0: v0.7.0 was tagged and
+             GitHub-released, but its Maven Central publish never completed
+             (the Sonatype deployment was staged and validated but never
+             taken out of "pending manual publish"; see maven-metadata.xml
+             at repo1.maven.org, which still lists 0.6.0 as <latest>). japicmp
+             resolves this version as a real Maven dependency, so pointing it
+             at an unpublished 0.7.0 would break dependency resolution for
+             every PR, not just report a compatibility diff. Bump this to
+             0.7.0 once it's actually published, or skip it entirely and move
+             straight to 0.8.0 as the successor to 0.6.0 if 0.7.0 is
+             abandoned. -->
         <japicmp.oldVersion>0.6.0</japicmp.oldVersion>
     </properties>
     <dependencyManagement>
