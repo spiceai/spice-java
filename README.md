@@ -415,6 +415,26 @@ for (ConnectionDetails connection : client.runtimeStatus()) {
 `REFRESHING`, `SHUTTING_DOWN`, or `NOT_LOADED`. A status a newer runtime introduces maps to
 `UNKNOWN` rather than failing; `getRawStatus()` returns it verbatim.
 
+#### Active queries
+
+Use `listActiveQueries()` to see the synchronous queries currently running on the runtime,
+and `cancelActiveQuery(queryId)` to cancel one. The runtime does not hand a query's ID back
+to the client that submitted it, so listing is the only way to find the ID that cancelling
+needs.
+
+```java
+for (ActiveQuery query : client.listActiveQueries()) {
+    System.out.printf("%s %s %s%n",
+        query.getQueryId(), query.getProtocol(), query.getSqlPreview());
+}
+
+client.cancelActiveQuery(queryId);
+```
+
+Both calls are scoped to the authenticated API key or client certificate — not to this
+`SpiceClient` instance — and reach only the one runtime process behind this client's HTTP
+endpoint, which matters if that endpoint is a load balancer in front of several runtimes.
+
 ### Logging
 
 The SDK uses SLF4J for logging, allowing you to plug in your preferred logging implementation (Logback, Log4j2, java.util.logging, etc.).
