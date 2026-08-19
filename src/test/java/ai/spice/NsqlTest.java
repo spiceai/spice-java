@@ -155,6 +155,15 @@ public class NsqlTest extends TestCase {
         assertTrue(lastBody.get().contains("\"model\":\"my-model\""));
         assertFalse(lastBody.get().contains("prompt_cache_key"));
         assertFalse(lastBody.get().contains("datasets"));
+        // sample_data_enabled defaults to false server-side; a query-only
+        // request must omit it rather than always sending "false".
+        assertFalse(lastBody.get().contains("sample_data_enabled"));
+    }
+
+    public void testNsqlRequestBodyIncludesSampleDataEnabledWhenSet() throws Exception {
+        SpiceClient client = newClient(null);
+        client.nsql(new NsqlRequest("q").withSampleDataEnabled(true));
+        assertTrue(lastBody.get().contains("\"sample_data_enabled\":true"));
     }
 
     public void testNsqlGenerateSqlUsesSqlAcceptHeaderAndReturnsTrimmedText() throws Exception {
@@ -184,6 +193,21 @@ public class NsqlTest extends TestCase {
 
     public void testNsqlMalformedResponseThrows() throws Exception {
         responseBody = "not json";
+
+        SpiceClient client = newClient(null);
+        try {
+            client.nsql(new NsqlRequest("q"));
+            fail("Expected ExecutionException");
+        } catch (ExecutionException e) {
+            assertTrue(e.getMessage().contains("malformed"));
+        }
+    }
+
+    public void testNsqlNullJsonResponseThrows() throws Exception {
+        // A 200 with an empty body, or the JSON literal "null", is valid JSON
+        // that Gson decodes to null rather than throwing — must not surface as
+        // a successful null NsqlResponse.
+        responseBody = "null";
 
         SpiceClient client = newClient(null);
         try {

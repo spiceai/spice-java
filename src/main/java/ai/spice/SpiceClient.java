@@ -1619,11 +1619,20 @@ public class SpiceClient implements AutoCloseable {
      */
     public NsqlResponse nsql(NsqlRequest request) throws ExecutionException {
         byte[] body = doNsqlRequest(request, NSQL_JSON_MEDIA_TYPE);
+        NsqlResponse response;
         try {
-            return GSON.fromJson(new String(body, StandardCharsets.UTF_8), NsqlResponse.class);
+            response = GSON.fromJson(new String(body, StandardCharsets.UTF_8), NsqlResponse.class);
         } catch (JsonSyntaxException err) {
             throw new ExecutionException("The runtime returned a malformed nsql response", err);
         }
+        // An empty body or the JSON literal "null" is valid JSON but not the
+        // documented response shape; Gson returns null rather than throwing for
+        // either, so check explicitly instead of letting callers hit an
+        // unrelated NPE.
+        if (response == null) {
+            throw new ExecutionException("The runtime returned a malformed nsql response", null);
+        }
+        return response;
     }
 
     /**

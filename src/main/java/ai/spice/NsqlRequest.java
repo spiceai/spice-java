@@ -22,6 +22,8 @@ SOFTWARE.
 
 package ai.spice;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import com.google.gson.annotations.SerializedName;
@@ -44,8 +46,12 @@ public class NsqlRequest {
     @SerializedName("datasets")
     private List<String> datasets;
 
+    // Boxed and left null when unset, rather than a primitive boolean, so Gson
+    // omits this field entirely instead of always sending "sample_data_enabled":
+    // false — the runtime already defaults it to false, and gospice's equivalent
+    // field is "omitempty".
     @SerializedName("sample_data_enabled")
-    private boolean sampleDataEnabled;
+    private Boolean sampleDataEnabled;
 
     @SerializedName("prompt_cache_key")
     private String promptCacheKey;
@@ -81,7 +87,7 @@ public class NsqlRequest {
      * @return this request
      */
     public NsqlRequest withDatasets(List<String> datasets) {
-        this.datasets = datasets;
+        this.datasets = datasets == null ? null : new ArrayList<>(datasets);
         return this;
     }
 
@@ -119,11 +125,11 @@ public class NsqlRequest {
     }
 
     public List<String> getDatasets() {
-        return this.datasets;
+        return this.datasets == null ? null : Collections.unmodifiableList(this.datasets);
     }
 
     public boolean isSampleDataEnabled() {
-        return this.sampleDataEnabled;
+        return Boolean.TRUE.equals(this.sampleDataEnabled);
     }
 
     public String getPromptCacheKey() {
