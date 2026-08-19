@@ -415,6 +415,22 @@ for (ConnectionDetails connection : client.runtimeStatus()) {
 `REFRESHING`, `SHUTTING_DOWN`, or `NOT_LOADED`. A status a newer runtime introduces maps to
 `UNKNOWN` rather than failing; `getRawStatus()` returns it verbatim.
 
+### Natural Language to SQL (Nsql)
+
+Use `nsql()` to have the runtime's configured LLM translate a natural-language question
+into SQL and run it, or `nsqlGenerateSql()` to only generate the SQL without running it.
+Requires an LLM model configured in the Spicepod — see the
+[text-to-SQL docs](https://docs.spice.ai/features/text-to-sql).
+
+```java
+NsqlResponse response = client.nsql(new NsqlRequest("how many taxi trips were there yesterday?"));
+System.out.println(response.getSql());       // the SQL the model generated
+System.out.println(response.getData());      // the rows it returned, decoded from JSON
+
+// Inspect or edit the generated SQL without running it:
+String sql = client.nsqlGenerateSql(new NsqlRequest("how many taxi trips were there yesterday?"));
+```
+
 ### Logging
 
 The SDK uses SLF4J for logging, allowing you to plug in your preferred logging implementation (Logback, Log4j2, java.util.logging, etc.).
