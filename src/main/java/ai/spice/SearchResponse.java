@@ -1,0 +1,58 @@
+/*
+Copyright 2026 The Spice.ai OSS Authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+package ai.spice;
+
+import java.util.Collections;
+import java.util.List;
+
+import com.google.gson.annotations.SerializedName;
+
+/**
+ * The result of a single {@link SpiceClient#search(SearchRequest)} call.
+ */
+public class SearchResponse {
+
+    @SerializedName("results")
+    private List<SearchMatch> results;
+
+    @SerializedName("duration_ms")
+    private long durationMs;
+
+    /**
+     * The matches, ordered by descending score.
+     *
+     * @return the matches, or an empty list if the runtime returned none
+     */
+    public List<SearchMatch> getResults() {
+        return this.results == null ? Collections.emptyList() : this.results;
+    }
+
+    /**
+     * How long the runtime reported the search took.
+     *
+     * @return the duration in milliseconds
+     */
+    public long getDurationMs() {
+        return this.durationMs;
+    }
+}
