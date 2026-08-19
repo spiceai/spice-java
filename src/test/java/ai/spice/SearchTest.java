@@ -46,6 +46,7 @@ import junit.framework.TestCase;
 public class SearchTest extends TestCase {
 
     private HttpServer httpServer;
+    private TestFlightSqlServer flightServer;
     private final AtomicReference<String> lastPath = new AtomicReference<>();
     private final AtomicReference<String> lastMethod = new AtomicReference<>();
     private final AtomicReference<String> lastBody = new AtomicReference<>();
@@ -66,6 +67,10 @@ public class SearchTest extends TestCase {
     @Override
     protected void tearDown() throws Exception {
         httpServer.stop(0);
+        if (this.flightServer != null) {
+            this.flightServer.close();
+            this.flightServer = null;
+        }
         super.tearDown();
     }
 
@@ -93,7 +98,14 @@ public class SearchTest extends TestCase {
         SpiceClientBuilder builder = SpiceClient.builder()
                 .withHttpAddress(new URI("http://localhost:" + httpServer.getAddress().getPort()));
         if (apiKey != null) {
-            builder = builder.withApiKey(apiKey);
+            // withApiKey() makes the constructor perform a real Flight handshake, so an
+            // authenticated client needs a real (test) Flight endpoint to handshake against.
+            // Without this, the handshake targets the builder's default flight address, where
+            // nothing is listening; that failed unpredictably by platform (reliably on Windows
+            // CI, only sometimes on Linux/macOS).
+            String appId = apiKey.split("\\|")[0];
+            this.flightServer = new TestFlightSqlServer(appId, apiKey);
+            builder = builder.withFlightAddress(this.flightServer.flightUri()).withApiKey(apiKey);
         }
         return builder.build();
     }
