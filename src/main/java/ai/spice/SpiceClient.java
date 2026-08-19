@@ -1609,6 +1609,11 @@ public class SpiceClient implements AutoCloseable {
      * runtime instance this client's HTTP endpoint reaches, which behind a load
      * balancer may not be the instance that received a particular query.
      *
+     * <p>
+     * Runtime releases up to and including v2.1.5 do not scope this endpoint at
+     * all: on those versions, every caller sees every query regardless of
+     * credential.
+     *
      * @return the currently running synchronous queries
      * @throws ExecutionException if the runtime is unreachable or returns an
      *                            unexpected response
@@ -1616,7 +1621,21 @@ public class SpiceClient implements AutoCloseable {
     public List<ActiveQuery> listActiveQueries() throws ExecutionException {
         logger.debug("Listing active queries");
         try {
-            HttpRequest request = buildProbeRequest(this.httpAddress, "/v1/sql/active", this.apiKey);
+            // Resolve rather than concatenate: a base address with a trailing slash
+            // would otherwise produce "http://host:8090//v1/sql/active".
+            URI uri = this.httpAddress.resolve("/v1/sql/active");
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(uri)
+                    // Bound the same way cancelActiveQuery and refreshDataset are, so a
+                    // runtime that accepts the connection but never responds cannot hang
+                    // this call forever.
+                    .timeout(HTTP_REQUEST_TIMEOUT)
+                    .header("X-Spice-User-Agent", Config.getUserAgent())
+                    .GET();
+            if (!Strings.isNullOrEmpty(this.apiKey)) {
+                builder = builder.header("X-API-Key", this.apiKey);
+            }
+            HttpRequest request = builder.build();
 
             HttpResponse<String> response = httpClient().send(request, HttpResponse.BodyHandlers.ofString());
 
@@ -1658,15 +1677,26 @@ public class SpiceClient implements AutoCloseable {
      *
      * @param body the JSON object the runtime returned
      * @return the parsed active queries, or an empty list when the body carries none
+     * @throws ExecutionException if the body is not the expected shape
      */
-    private static List<ActiveQuery> parseActiveQueries(String body) {
-        JsonElement root = JsonParser.parseString(body == null ? "" : body);
+    private static List<ActiveQuery> parseActiveQueries(String body) throws ExecutionException {
+        JsonElement root;
+        try {
+            root = JsonParser.parseString(body == null ? "" : body);
+        } catch (JsonSyntaxException err) {
+            throw new ExecutionException("The runtime returned a malformed active-queries response", err);
+        }
         if (root == null || !root.isJsonObject()) {
+            throw new ExecutionException("The runtime returned an unexpected active-queries response", null);
+        }
+        // "queries" absent is treated as none, but present-and-wrong-shape is a
+        // malformed response, not silently zero active queries.
+        JsonElement queries = root.getAsJsonObject().get("queries");
+        if (queries == null) {
             return Collections.emptyList();
         }
-        JsonElement queries = root.getAsJsonObject().get("queries");
-        if (queries == null || !queries.isJsonArray()) {
-            return Collections.emptyList();
+        if (!queries.isJsonArray()) {
+            throw new ExecutionException("The runtime returned an unexpected active-queries response", null);
         }
 
         List<ActiveQuery> result = new ArrayList<>();
@@ -1690,6 +1720,11 @@ public class SpiceClient implements AutoCloseable {
      * {@link #listActiveQueries()}, this reaches only the one runtime instance
      * this client's HTTP endpoint resolves to.
      *
+     * <p>
+     * Runtime releases up to and including v2.1.5 do not scope this endpoint at
+     * all: on those versions, any known query ID can be cancelled regardless of
+     * credential.
+     *
      * @param queryId the ID of the query to cancel, from {@link #listActiveQueries()}
      * @throws ExecutionException if the runtime is unreachable or reports a failure
      */
@@ -1708,8 +1743,11 @@ public class SpiceClient implements AutoCloseable {
 
         logger.debug("Cancelling active query: {}", queryId);
         try {
+            // Resolve rather than concatenate: a base address with a trailing slash
+            // would otherwise produce "http://host:8090//v1/sql/.../cancel".
+            URI uri = this.httpAddress.resolve("/v1/sql/" + queryId + "/cancel");
             HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .uri(new URI(String.format("%s/v1/sql/%s/cancel", this.httpAddress, queryId)))
+                    .uri(uri)
                     .timeout(HTTP_REQUEST_TIMEOUT)
                     .header("Accept", "application/json")
                     .header("X-Spice-User-Agent", Config.getUserAgent())

@@ -90,6 +90,13 @@ public class ActiveQueriesTest extends TestCase {
         return builder.build();
     }
 
+    /** Like {@link #clientForServer(String)}, but with a trailing slash on the base address. */
+    private SpiceClient clientForServerWithTrailingSlash() throws Exception {
+        this.server.start();
+        URI httpAddress = new URI("http://127.0.0.1:" + this.server.getAddress().getPort() + "/");
+        return SpiceClient.builder().withHttpAddress(httpAddress).build();
+    }
+
     @Override
     protected void tearDown() throws Exception {
         if (this.client != null) {
@@ -183,6 +190,47 @@ public class ActiveQueriesTest extends TestCase {
         }
     }
 
+    public void testListActiveQueriesResolvesTrailingSlashBase() throws Exception {
+        startServer();
+        stub("/v1/sql/active", 200, "{\"queries\":[]}");
+        this.client = clientForServerWithTrailingSlash();
+
+        this.client.listActiveQueries();
+
+        assertEquals("a trailing slash on the base address must not double up",
+                "/v1/sql/active", lastPath.get());
+    }
+
+    public void testListActiveQueriesRejectsMalformedQueriesField() throws Exception {
+        startServer();
+        // "queries" present but not an array: must not be silently treated as zero
+        // active queries.
+        stub("/v1/sql/active", 200, "{\"queries\":\"not-an-array\"}");
+        this.client = clientForServer(null);
+
+        try {
+            this.client.listActiveQueries();
+            fail("a malformed queries field should raise");
+        } catch (ExecutionException e) {
+            assertTrue("expected a malformed-response message: " + e.getMessage(),
+                    e.getMessage().contains("unexpected active-queries response"));
+        }
+    }
+
+    public void testListActiveQueriesRejectsNonObjectBody() throws Exception {
+        startServer();
+        stub("/v1/sql/active", 200, "[]");
+        this.client = clientForServer(null);
+
+        try {
+            this.client.listActiveQueries();
+            fail("a non-object body should raise");
+        } catch (ExecutionException e) {
+            assertTrue("expected a malformed-response message: " + e.getMessage(),
+                    e.getMessage().contains("unexpected active-queries response"));
+        }
+    }
+
     // ==================== cancelActiveQuery ====================
 
     public void testCancelActiveQuerySucceedsOn200() throws Exception {
@@ -195,6 +243,18 @@ public class ActiveQueriesTest extends TestCase {
 
         assertEquals("POST", lastMethod.get());
         assertEquals("/v1/sql/" + VALID_QUERY_ID + "/cancel", lastPath.get());
+    }
+
+    public void testCancelActiveQueryResolvesTrailingSlashBase() throws Exception {
+        startServer();
+        stub("/v1/sql/" + VALID_QUERY_ID + "/cancel", 200,
+                "{\"query_id\":\"" + VALID_QUERY_ID + "\",\"status\":\"CANCELLED\"}");
+        this.client = clientForServerWithTrailingSlash();
+
+        this.client.cancelActiveQuery(VALID_QUERY_ID);
+
+        assertEquals("a trailing slash on the base address must not double up",
+                "/v1/sql/" + VALID_QUERY_ID + "/cancel", lastPath.get());
     }
 
     public void testCancelActiveQuerySendsApiKeyWhenConfigured() throws Exception {
