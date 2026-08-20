@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787127195218,
+  "lastUpdate": 1787213696766,
   "repoUrl": "https://github.com/spiceai/spice-java",
   "entries": {
     "spice-java in-process benchmarks": [
@@ -792,6 +792,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "query() p50",
             "value": 1121,
+            "unit": "us"
+          },
+          {
+            "name": "param-root bytes per 100 binds",
+            "value": 3490,
+            "unit": "bytes"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Viktor Yershov",
+            "username": "krinart",
+            "email": "krinart@gmail.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "dcd719d0bc09c282dfb661fc22b0e2fb1b303ded",
+          "message": "feat: add `Nsql` and `NsqlGenerateSql` for the runtime's `/v1/nsql` endpoint (#55)\n\n* feat: add Nsql and NsqlGenerateSql for the runtime's /v1/nsql endpoint\n\nText-to-SQL was reachable from other SDKs but not from Java. nsql() runs the\ngenerated query and returns the rows alongside the SQL; nsqlGenerateSql()\nstops after generation so the query can be inspected or run separately.\n\n* fix: give the authenticated NsqlTest case a real Flight endpoint\n\nwithApiKey() makes SpiceClient's constructor perform a real Flight\nhandshake, but the API-key test only stood up the HTTP mock server,\nnot a Flight server. The handshake against a dead default Flight\naddress failed unpredictably by platform (reliable on Windows CI,\nintermittent on Linux/macOS). Start a TestFlightSqlServer with\nmatching credentials for that case.\n\n* fix: address review feedback on nsql()\n\n- Reject a null/empty-body decoded response instead of letting nsql()\n  return null in violation of its contract.\n- Box sampleDataEnabled so an unset value is omitted from the request\n  body instead of always sending \"sample_data_enabled\":false.\n- Defensively copy NsqlRequest.datasets on the way in and return an\n  unmodifiable view on the way out.",
+          "timestamp": "2026-08-19T22:07:54Z",
+          "url": "https://github.com/spiceai/spice-java/commit/dcd719d0bc09c282dfb661fc22b0e2fb1b303ded"
+        },
+        "date": 1787213696132,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "queryWithParams cached p50",
+            "value": 1959,
+            "unit": "us"
+          },
+          {
+            "name": "queryWithParams uncached p50",
+            "value": 2066,
+            "unit": "us"
+          },
+          {
+            "name": "query() p50",
+            "value": 766,
             "unit": "us"
           },
           {
