@@ -1,5 +1,5 @@
 /*
-Copyright 2024 The Spice.ai OSS Authors
+Copyright 2026 The Spice.ai OSS Authors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,14 +22,29 @@ SOFTWARE.
 
 package ai.spice;
 
-public class Version {
-    /**
-     * spice-java SDK version, defined statically to support more platforms vs
-     * relying on .jar packaging
-     */
-    public static final String SPICE_JAVA_VERSION;
+import java.util.Collections;
+import java.util.List;
 
-    static {
-        SPICE_JAVA_VERSION = "0.8.0";
+import com.google.gson.annotations.SerializedName;
+
+/**
+ * The schema of the rows an {@link SpiceClient#nsql(NsqlRequest)} call
+ * returned.
+ *
+ * <p>
+ * {@link #getFields()} is empty when the generated query returned no rows —
+ * the runtime omits the schema body in that case.
+ */
+public class NsqlSchema {
+    @SerializedName("fields")
+    private List<NsqlField> fields;
+
+    /**
+     * The columns of the result, in order.
+     *
+     * @return the fields, or an empty list when the runtime omitted them
+     */
+    public List<NsqlField> getFields() {
+        return this.fields == null ? Collections.emptyList() : this.fields;
     }
 }

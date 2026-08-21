@@ -30,6 +30,7 @@ import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -1541,6 +1542,80 @@ public class SpiceClient implements AutoCloseable {
     }
 
     /**
+     * Finds documents similar to {@code request}'s text by calling the
+     * runtime's {@code /v1/search} endpoint.
+     *
+     * <p>
+     * This runs against datasets that have an embedding column and a loaded
+     * embedding model. See
+     * <a href="https://docs.spice.ai/features/search-and-retrieval">the
+     * search and retrieval docs</a> for how to configure them.
+     *
+     * @param request the search request
+     * @return the search response
+     * @throws ExecutionException if there is an error performing the search
+     */
+    public SearchResponse search(SearchRequest request) throws ExecutionException {
+        if (request == null) {
+            throw new IllegalArgumentException("No search request provided");
+        }
+        if (Strings.isNullOrEmpty(request.getText())) {
+            throw new IllegalArgumentException("SearchRequest.text is required and must be a non-empty string");
+        }
+        if (request.getLimit() != null && request.getLimit() < 1) {
+            throw new IllegalArgumentException("SearchRequest.limit must be greater than 0, got " + request.getLimit());
+        }
+
+        logger.debug("Performing search: {}", request.getText());
+        try {
+            // Resolve rather than concatenate: a base address with a trailing slash
+            // would otherwise produce "http://host:8090//v1/search".
+            URI uri = this.httpAddress.resolve("/v1/search");
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(uri)
+                    .timeout(HTTP_REQUEST_TIMEOUT)
+                    .header("Content-Type", "application/json")
+                    .header("X-Spice-User-Agent", Config.getUserAgent());
+            if (!Strings.isNullOrEmpty(this.apiKey)) {
+                builder = builder.header("X-API-Key", this.apiKey);
+            }
+            builder = builder.POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(request)));
+
+            HttpRequest httpRequest = builder.build();
+            HttpResponse<String> response = httpClient().send(httpRequest, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                logger.error("Search failed - statusCode={}, response={}", response.statusCode(), response.body());
+                // The runtime explains search failures in a plain-text body (e.g. "No data
+                // sources provided"); surface it rather than only the status code.
+                throw new ExecutionException(
+                        String.format("Failed to perform search. Status Code: %d, Response: %s",
+                                response.statusCode(), response.body()),
+                        null);
+            }
+
+            try {
+                return GSON.fromJson(response.body(), SearchResponse.class);
+            } catch (JsonSyntaxException e) {
+                throw new ExecutionException("The runtime returned a malformed search response", e);
+            }
+        } catch (ExecutionException e) {
+            // no need to wrap ExecutionException
+            throw e;
+        } catch (ConnectException err) {
+            logger.error("Cannot connect to Spice runtime at {}: {}", this.httpAddress, err.getMessage());
+            throw new ExecutionException(
+                    String.format("The Spice runtime is unavailable at %s. Is it running?", this.httpAddress), err);
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            throw new ExecutionException("Interrupted while performing search", err);
+        } catch (Exception err) {
+            logger.error("Search failed: {}", err.getMessage());
+            throw new ExecutionException("Failed to perform search due to error: " + err.toString(), err);
+        }
+    }
+
+    /**
      * Refreshes an accelerated dataset using the configured dataset acceleration
      * settings
      *
@@ -1761,6 +1836,121 @@ public class SpiceClient implements AutoCloseable {
             throw new ExecutionException("Failed to perform " + actionType + " due to error: " + e.toString(), e);
         } catch (RuntimeException e) {
             throw new ExecutionException("Failed to perform " + actionType + " due to error: " + e.toString(), e);
+        }
+    }
+
+    // Without this Accept header, /v1/nsql returns a bare array of rows and
+    // drops the generated SQL.
+    private static final String NSQL_JSON_MEDIA_TYPE = "application/vnd.spiceai.nsql.v1+json";
+    // Asks the runtime to generate SQL without executing it.
+    private static final String NSQL_SQL_MEDIA_TYPE = "application/sql";
+
+    /**
+     * Answers {@code request}'s query by having the runtime's configured LLM
+     * generate SQL, then running it.
+     *
+     * <p>
+     * The generated SQL is returned in {@link NsqlResponse#getSql()}. The
+     * runtime executes it read-only and retries generation when the query
+     * fails to run, so a returned error means generation or execution failed
+     * repeatedly.
+     *
+     * <p>
+     * Nsql requires an LLM model in the Spicepod. See
+     * <a href="https://docs.spice.ai/features/text-to-sql">the Nsql
+     * docs</a> for how to configure one.
+     *
+     * @param request the natural-language query
+     * @return the generated SQL and the rows it produced
+     * @throws ExecutionException if there is an error generating or running the query
+     */
+    public NsqlResponse nsql(NsqlRequest request) throws ExecutionException {
+        byte[] body = doNsqlRequest(request, NSQL_JSON_MEDIA_TYPE);
+        NsqlResponse response;
+        try {
+            response = GSON.fromJson(new String(body, StandardCharsets.UTF_8), NsqlResponse.class);
+        } catch (JsonSyntaxException err) {
+            throw new ExecutionException("The runtime returned a malformed nsql response", err);
+        }
+        // An empty body or the JSON literal "null" is valid JSON but not the
+        // documented response shape; Gson returns null rather than throwing for
+        // either, so check explicitly instead of letting callers hit an
+        // unrelated NPE.
+        if (response == null) {
+            throw new ExecutionException("The runtime returned a malformed nsql response", null);
+        }
+        return response;
+    }
+
+    /**
+     * Translates {@code request}'s query into SQL without running it.
+     *
+     * <p>
+     * Use it to inspect or edit the query before running it, or to run it
+     * through {@link #query(String)} or {@link #queryWithParams(String, Object...)}
+     * so the results arrive as Arrow rather than decoded JSON.
+     *
+     * @param request the natural-language query
+     * @return the generated SQL
+     * @throws ExecutionException if there is an error generating the query
+     */
+    public String nsqlGenerateSql(NsqlRequest request) throws ExecutionException {
+        byte[] body = doNsqlRequest(request, NSQL_SQL_MEDIA_TYPE);
+        return new String(body, StandardCharsets.UTF_8).trim();
+    }
+
+    /**
+     * Posts {@code request} to {@code /v1/nsql} asking for {@code accept},
+     * and returns the response body when the runtime answered 200.
+     */
+    private byte[] doNsqlRequest(NsqlRequest request, String accept) throws ExecutionException {
+        if (request == null) {
+            throw new IllegalArgumentException("No NsqlRequest provided");
+        }
+        if (Strings.isNullOrEmpty(request.getQuery())) {
+            throw new IllegalArgumentException(
+                    "NsqlRequest.query is required and must be a non-empty natural language query");
+        }
+
+        logger.debug("Executing nsql request: {}", request.getQuery());
+        try {
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(this.httpAddress.resolve("/v1/nsql"))
+                    .timeout(HTTP_REQUEST_TIMEOUT)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", accept)
+                    .header("X-Spice-User-Agent", Config.getUserAgent())
+                    .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(request)));
+
+            if (!Strings.isNullOrEmpty(this.apiKey)) {
+                builder = builder.header("X-API-Key", this.apiKey);
+            }
+
+            HttpResponse<byte[]> response = httpClient().send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
+
+            if (response.statusCode() != 200) {
+                String responseBody = new String(response.body(), StandardCharsets.UTF_8).trim();
+                logger.error("Nsql request failed - statusCode={}, response={}", response.statusCode(), responseBody);
+                throw new ExecutionException(
+                        String.format("Failed to execute nsql request. Status Code: %d, Response: %s",
+                                response.statusCode(), responseBody),
+                        null);
+            }
+            logger.debug("Nsql request executed successfully");
+            return response.body();
+        } catch (ExecutionException e) {
+            // no need to wrap ExecutionException
+            throw e;
+        } catch (ConnectException err) {
+            logger.error("Cannot connect to Spice runtime at {}: {}", this.httpAddress, err.getMessage());
+            throw new ExecutionException(
+                    String.format("The Spice runtime is unavailable at %s. Is it running?", this.httpAddress), err);
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            throw new ExecutionException("Interrupted while executing nsql request", err);
+        } catch (Exception err) {
+            logger.error("Nsql request failed: {}", err.getMessage());
+            throw new ExecutionException("Failed to execute nsql request due to error: " + err.toString(), err);
         }
     }
 
