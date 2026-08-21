@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787213696766,
+  "lastUpdate": 1787300155384,
   "repoUrl": "https://github.com/spiceai/spice-java",
   "entries": {
     "spice-java in-process benchmarks": [
@@ -834,6 +834,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "query() p50",
             "value": 766,
+            "unit": "us"
+          },
+          {
+            "name": "param-root bytes per 100 binds",
+            "value": 3490,
+            "unit": "bytes"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Viktor Yershov",
+            "username": "krinart",
+            "email": "viktor@spice.ai"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "dd5a37e9475e0438b3b5aece609799de5f620c6b",
+          "message": "release: prepare v0.8.0 (#57)\n\n* release: prepare v0.8.0\n\nBumps pom.xml/Version.java to 0.8.0 and adds release notes covering the\nfour additive feature PRs (#53-#56): search, Nsql/NsqlGenerateSql,\nactive-query management, and async queries.\n\njapicmp.oldVersion stays at 0.6.0 rather than bumping to 0.7.0: v0.7.0\nwas tagged and GitHub-released but its Maven Central publish never\ncompleted, so it isn't a resolvable dependency. See the pom.xml comment\nfor detail.\n\n* docs: reflect that #54 (search) and #55 (nsql) have merged\n\n* docs: scope v0.8.0 to search + nsql only\n\n#53 (active queries) and #56 (async queries) will not merge for this\nrelease; remove them from the release notes' What's New and reflect\nthat in Release status instead of listing them as still-pending\ndependencies.\n\n* Update release notes for v0.8.0\n\nRemoved release status section and notes on features not included in v0.8.0.\n\n* Update release notes for v0.8.0\n\nRemoved testing section from release notes for v0.8.0.\n\n* Update release notes for v0.8.0\n\nRemoved highlights section from release notes for v0.8.0.\n\n* Change japicmp.oldVersion from 0.6.0 to 0.7.0\n\nUpdated the old version for japicmp to 0.7.0.",
+          "timestamp": "2026-08-20T16:56:05Z",
+          "url": "https://github.com/spiceai/spice-java/commit/dd5a37e9475e0438b3b5aece609799de5f620c6b"
+        },
+        "date": 1787300154697,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "queryWithParams cached p50",
+            "value": 2856,
+            "unit": "us"
+          },
+          {
+            "name": "queryWithParams uncached p50",
+            "value": 2923,
+            "unit": "us"
+          },
+          {
+            "name": "query() p50",
+            "value": 1072,
             "unit": "us"
           },
           {
