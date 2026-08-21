@@ -1760,9 +1760,19 @@ public class SpiceClient implements AutoCloseable {
      * an async query. Package-private: called by {@link AsyncQuery}.
      */
     JsonObject asyncQueryStatus(String queryId) throws ExecutionException {
+        return asyncQueryStatus(queryId, null);
+    }
+
+    /**
+     * Fetches the current status of an async query, bounding the RPC to
+     * {@code perCallTimeout} when given. Package-private: called by
+     * {@link AsyncQuery#waitForCompletion(java.time.Duration)} so a stalled
+     * poll cannot outlive the caller's remaining wait budget.
+     */
+    JsonObject asyncQueryStatus(String queryId, java.time.Duration perCallTimeout) throws ExecutionException {
         JsonObject request = new JsonObject();
         request.addProperty("query_id", queryId);
-        byte[] body = doFlightAction(ACTION_GET_ASYNC_QUERY_STATUS, request);
+        byte[] body = doFlightAction(ACTION_GET_ASYNC_QUERY_STATUS, request, false, perCallTimeout);
         return parseAsyncActionResponse(body, "async query status response");
     }
 
@@ -1785,7 +1795,11 @@ public class SpiceClient implements AutoCloseable {
         JsonObject request = new JsonObject();
         request.addProperty("query_id", queryId);
         request.addProperty("chunk_index", chunkIndex);
-        return doFlightAction(ACTION_GET_ASYNC_QUERY_RESULT, request);
+        // Result downloads are not bounded by the planning/query timeout baked
+        // into callOptions (see SpiceClientBuilder's withQueryTimeout docs) —
+        // use the auth-only streamOptions, matching how the sync query path
+        // downloads results.
+        return doFlightAction(ACTION_GET_ASYNC_QUERY_RESULT, request, true);
     }
 
     /**
@@ -1813,30 +1827,66 @@ public class SpiceClient implements AutoCloseable {
      * Performs a Flight {@code DoAction} with a JSON-encoded request body and
      * returns the concatenated {@code Result} bodies, wrapping any failure into
      * an {@link ExecutionException} (this file's convention for every public
-     * method). Re-authenticates once and does not retry further — callers that
-     * need retries on transient errors (matching gospice's behavior, which also
-     * does not retry {@code DoAction}) can call the {@code AsyncQuery} method
-     * again.
+     * method). On {@code UNAUTHENTICATED}, re-authenticates and retries the
+     * action exactly once on the fresh channel — matching the automatic
+     * re-handshake-and-retry behavior of the sync query paths — before giving
+     * up. Does not retry on any other error (matching gospice's behavior, which
+     * also does not retry {@code DoAction}); callers that need retries on
+     * transient errors can call the {@code AsyncQuery} method again.
      */
     private byte[] doFlightAction(String actionType, JsonObject request) throws ExecutionException {
-        final FlightChannel[] snapshot = currentChannels();
-        FlightChannel channel = selectChannel(snapshot);
+        return doFlightAction(actionType, request, false, null);
+    }
+
+    private byte[] doFlightAction(String actionType, JsonObject request, boolean useStreamOptions)
+            throws ExecutionException {
+        return doFlightAction(actionType, request, useStreamOptions, null);
+    }
+
+    private byte[] doFlightAction(String actionType, JsonObject request, boolean useStreamOptions,
+            java.time.Duration perCallTimeout) throws ExecutionException {
         byte[] requestBody = GSON.toJson(request).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        FlightChannel[] snapshot = currentChannels();
         try {
-            Iterator<Result> results = channel.rawClient.doAction(new Action(actionType, requestBody),
-                    channel.callOptions);
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            while (results.hasNext()) {
-                byte[] resultBody = results.next().getBody();
-                out.write(resultBody, 0, resultBody.length);
-            }
-            return out.toByteArray();
+            return doFlightActionOnce(actionType, requestBody, snapshot, useStreamOptions, perCallTimeout);
         } catch (FlightRuntimeException e) {
             maybeRebuildOnAuthError(e, snapshot);
+            if (e.status().code() == FlightStatusCode.UNAUTHENTICATED && !Strings.isNullOrEmpty(apiKey)) {
+                try {
+                    FlightChannel[] rebuilt = currentChannels();
+                    return doFlightActionOnce(actionType, requestBody, rebuilt, useStreamOptions, perCallTimeout);
+                } catch (RuntimeException retryError) {
+                    throw new ExecutionException(
+                            "Failed to perform " + actionType + " due to error: " + retryError.toString(),
+                            retryError);
+                }
+            }
             throw new ExecutionException("Failed to perform " + actionType + " due to error: " + e.toString(), e);
         } catch (RuntimeException e) {
             throw new ExecutionException("Failed to perform " + actionType + " due to error: " + e.toString(), e);
         }
+    }
+
+    private byte[] doFlightActionOnce(String actionType, byte[] requestBody, FlightChannel[] snapshot,
+            boolean useStreamOptions, java.time.Duration perCallTimeout) {
+        FlightChannel channel = selectChannel(snapshot);
+        CallOption[] baseOptions = useStreamOptions ? channel.streamOptions : channel.callOptions;
+        CallOption[] options = baseOptions;
+        if (perCallTimeout != null) {
+            // Appended last so it overrides any queryTimeout already baked into
+            // callOptions: the caller's remaining wait budget is a tighter,
+            // more specific bound than the general planning-timeout default.
+            options = java.util.Arrays.copyOf(baseOptions, baseOptions.length + 1);
+            options[baseOptions.length] = CallOptions.timeout(Math.max(perCallTimeout.toMillis(), 0),
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
+        Iterator<Result> results = channel.rawClient.doAction(new Action(actionType, requestBody), options);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        while (results.hasNext()) {
+            byte[] resultBody = results.next().getBody();
+            out.write(resultBody, 0, resultBody.length);
+        }
+        return out.toByteArray();
     }
 
     // Without this Accept header, /v1/nsql returns a bare array of rows and

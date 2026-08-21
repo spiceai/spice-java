@@ -97,6 +97,8 @@ final class TestFlightSqlServer implements AutoCloseable {
     private volatile CallStatus injectedFailureStatus = CallStatus.UNAVAILABLE;
     private final AtomicBoolean rejectNextBearer = new AtomicBoolean();
     volatile long getFlightInfoDelayMs = 0;
+    private final AtomicInteger failNextGetAsyncQueryResult = new AtomicInteger();
+    private volatile CallStatus injectedAsyncQueryResultFailureStatus = CallStatus.UNAVAILABLE;
 
     // ==================== result shape ====================
     volatile int endpointCount = 1;
@@ -115,6 +117,9 @@ final class TestFlightSqlServer implements AutoCloseable {
     private final AtomicLong asyncQueryCounter = new AtomicLong();
     final AtomicInteger submitAsyncQueryCalls = new AtomicInteger();
     final AtomicInteger getAsyncQueryResultCalls = new AtomicInteger();
+
+    /** The JSON body of the last SubmitAsyncQuery action, for tests to assert on. */
+    volatile JsonObject lastSubmitAsyncQueryRequest;
 
     private final BufferAllocator allocator;
     private final FlightServer server;
@@ -195,6 +200,12 @@ final class TestFlightSqlServer implements AutoCloseable {
         this.failNextGetFlightInfo.set(count);
     }
 
+    /** The next N GetAsyncQueryResult calls fail with the given status, regardless of chunk availability. */
+    void failNextGetAsyncQueryResult(int count, CallStatus status) {
+        this.injectedAsyncQueryResultFailureStatus = status;
+        this.failNextGetAsyncQueryResult.set(count);
+    }
+
     /** Simulates a server restart: all existing prepared statement handles become unknown. */
     void invalidatePreparedStatements() {
         validHandles.clear();
@@ -264,6 +275,19 @@ final class TestFlightSqlServer implements AutoCloseable {
         server.shutdown();
         server.awaitTermination();
         allocator.close();
+    }
+
+    private boolean maybeInjectAsyncQueryResultFailure(org.apache.arrow.flight.FlightProducer.StreamListener<Result> listener) {
+        int remaining = failNextGetAsyncQueryResult.get();
+        while (remaining > 0) {
+            if (failNextGetAsyncQueryResult.compareAndSet(remaining, remaining - 1)) {
+                listener.onError(
+                        injectedAsyncQueryResultFailureStatus.withDescription("injected failure").toRuntimeException());
+                return true;
+            }
+            remaining = failNextGetAsyncQueryResult.get();
+        }
+        return false;
     }
 
     private void maybeInjectGetFlightInfoFailure() {
@@ -441,6 +465,7 @@ final class TestFlightSqlServer implements AutoCloseable {
 
         private void handleSubmitAsyncQuery(Action action, StreamListener<Result> listener) {
             submitAsyncQueryCalls.incrementAndGet();
+            lastSubmitAsyncQueryRequest = parseJson(action);
             String queryId = "aq-" + asyncQueryCounter.incrementAndGet();
             AsyncQueryState state = stateFor(queryId);
             JsonObject response = new JsonObject();
@@ -483,6 +508,9 @@ final class TestFlightSqlServer implements AutoCloseable {
 
         private void handleGetAsyncQueryResult(Action action, StreamListener<Result> listener) {
             getAsyncQueryResultCalls.incrementAndGet();
+            if (maybeInjectAsyncQueryResultFailure(listener)) {
+                return;
+            }
             JsonObject request = parseJson(action);
             String queryId = request.get("query_id").getAsString();
             int chunkIndex = request.get("chunk_index").getAsInt();

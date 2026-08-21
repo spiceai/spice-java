@@ -91,6 +91,24 @@ public class AsyncQueryTest extends TestCase {
         assertFalse("a fresh query id should not be blank", query.getQueryId().isEmpty());
         assertEquals(QueryStatus.SUCCEEDED, query.status());
         assertEquals(1, server.submitAsyncQueryCalls.get());
+        assertEquals("SELECT * FROM test", server.lastSubmitAsyncQueryRequest.get("sql").getAsString());
+        assertFalse("no parameters should be sent for a non-parameterized query",
+                server.lastSubmitAsyncQueryRequest.has("parameters"));
+    }
+
+    public void testQueryAsyncWithParamsSubmitsSqlAndParametersInOrder() throws Exception {
+        AsyncQuery query = client.queryAsyncWithParams(
+                "SELECT * FROM test WHERE id = $1 AND name = $2 AND note = $3", 1, "alice", null);
+        assertNotNull(query.getQueryId());
+
+        assertEquals("SELECT * FROM test WHERE id = $1 AND name = $2 AND note = $3",
+                server.lastSubmitAsyncQueryRequest.get("sql").getAsString());
+        com.google.gson.JsonArray params = server.lastSubmitAsyncQueryRequest.getAsJsonArray("parameters");
+        assertEquals(3, params.size());
+        assertEquals(1, params.get(0).getAsInt());
+        assertEquals("alice", params.get(1).getAsString());
+        assertTrue("a null parameter should be sent as JSON null, not omitted or reordered",
+                params.get(2).isJsonNull());
     }
 
     public void testStatusReflectsChangeBetweenPolls() throws Exception {
@@ -123,12 +141,19 @@ public class AsyncQueryTest extends TestCase {
         server.setAsyncQueryStatusSequence(query.getQueryId(),
                 Arrays.asList(QueryStatus.PENDING, QueryStatus.RUNNING));
 
+        long start = System.nanoTime();
         try {
             query.waitForCompletion(Duration.ofMillis(200));
             fail("expected a timeout ExecutionException");
         } catch (ExecutionException e) {
             assertTrue(e.getMessage().contains("Timed out"));
         }
+        long elapsedMillis = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        // The fixed 500ms poll interval must not be allowed to overshoot a
+        // shorter deadline; a generous upper bound keeps this from being flaky
+        // while still catching a regression back to the old unconditional sleep.
+        assertTrue("expected the wait to respect the 200ms deadline, took " + elapsedMillis + "ms",
+                elapsedMillis < 400);
     }
 
     public void testResultsMultiChunkReconstructsData() throws Exception {
@@ -161,6 +186,24 @@ public class AsyncQueryTest extends TestCase {
         try (ArrowReader reader = query.results()) {
             assertEquals(0, reader.getVectorSchemaRoot().getSchema().getFields().size());
             assertFalse(reader.loadNextBatch());
+        }
+    }
+
+    public void testResultsPropagatesChunkZeroFetchFailureForDeclaredNonEmptyResult() throws Exception {
+        AsyncQuery query = client.queryAsync("SELECT * FROM test");
+        byte[] chunk0 = serializeChunk(0, "a");
+        server.setAsyncQueryChunks(query.getQueryId(), Collections.singletonList(chunk0), 1);
+        // A genuine one-chunk result whose chunk-0 fetch fails at the RPC level
+        // (timeout, auth failure, expiry, server error) must propagate, not be
+        // silently converted into a successful empty reader.
+        server.failNextGetAsyncQueryResult(1, org.apache.arrow.flight.CallStatus.UNAVAILABLE);
+
+        try {
+            query.results();
+            fail("expected the declared chunk-0 fetch failure to propagate");
+        } catch (ExecutionException e) {
+            assertNotNull("expected the underlying chunk fetch failure as the cause", e.getCause());
+            assertTrue(e.getCause().getMessage().contains("Failed to fetch result chunk 0"));
         }
     }
 

@@ -74,7 +74,16 @@ public final class AsyncQuery {
      * @throws ExecutionException if the status could not be fetched
      */
     public QueryStatus status() throws ExecutionException {
-        JsonObject response = this.client.asyncQueryStatus(this.queryId);
+        return pollStatus(null);
+    }
+
+    /**
+     * Performs a single status poll, bounding the RPC to {@code perCallTimeout}
+     * when given so a stalled poll cannot outlive the caller's remaining wait
+     * budget.
+     */
+    private QueryStatus pollStatus(Duration perCallTimeout) throws ExecutionException {
+        JsonObject response = this.client.asyncQueryStatus(this.queryId, perCallTimeout);
         this.status = QueryStatus.fromWireValue(getString(response, "status"));
         return this.status;
     }
@@ -105,18 +114,37 @@ public final class AsyncQuery {
     public QueryStatus waitForCompletion(Duration timeout) throws ExecutionException {
         long deadlineNanos = (timeout == null) ? -1 : System.nanoTime() + timeout.toNanos();
         while (true) {
-            QueryStatus current = status();
+            Duration remaining = null;
+            if (deadlineNanos >= 0) {
+                long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    throw new ExecutionException(
+                            "Timed out waiting for async query " + this.queryId
+                                    + " to complete (last status: " + this.status + ")",
+                            null);
+                }
+                // Bounds the status RPC itself to what's left of the caller's
+                // budget, so a stalled poll cannot block past the deadline.
+                remaining = Duration.ofNanos(remainingNanos);
+            }
+            QueryStatus current = pollStatus(remaining);
             if (current.isTerminal()) {
                 return current;
             }
-            if (deadlineNanos >= 0 && System.nanoTime() >= deadlineNanos) {
-                throw new ExecutionException(
-                        "Timed out waiting for async query " + this.queryId
-                                + " to complete (last status: " + current + ")",
-                        null);
+            long sleepMillis = ASYNC_POLL_INTERVAL_MS;
+            if (deadlineNanos >= 0) {
+                long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    throw new ExecutionException(
+                            "Timed out waiting for async query " + this.queryId
+                                    + " to complete (last status: " + current + ")",
+                            null);
+                }
+                // Cap the sleep so it cannot itself overshoot a short deadline.
+                sleepMillis = Math.min(sleepMillis, java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remainingNanos));
             }
             try {
-                Thread.sleep(ASYNC_POLL_INTERVAL_MS);
+                Thread.sleep(sleepMillis);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new ExecutionException("Interrupted while waiting for async query " + this.queryId, e);
@@ -152,8 +180,7 @@ public final class AsyncQuery {
         }
 
         try {
-            return new AsyncQueryResultReader(this.client.allocator(), this.client, this.queryId,
-                    Math.max(chunkCount, 1));
+            return new AsyncQueryResultReader(this.client.allocator(), this.client, this.queryId, chunkCount);
         } catch (IOException e) {
             throw new ExecutionException("Failed to read results for async query " + this.queryId, e);
         }

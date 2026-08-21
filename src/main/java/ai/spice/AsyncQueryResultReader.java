@@ -51,6 +51,9 @@ final class AsyncQueryResultReader extends ArrowReader {
 
     private final SpiceClient client;
     private final String queryId;
+    /** The runtime-declared chunk count, which may be 0 for a genuinely empty result. */
+    private final int declaredChunkCount;
+    /** {@link #declaredChunkCount}, floored to 1 so chunk 0 is always attempted for a schema. */
     private final int chunkCount;
     private final Schema schema;
     private int nextChunkIndex;
@@ -58,23 +61,27 @@ final class AsyncQueryResultReader extends ArrowReader {
     private long bytesRead;
 
     /**
-     * Creates a reader over {@code chunkCount} result chunks of {@code queryId}.
-     * Opens the first chunk eagerly so failures surface here rather than
-     * mid-consumption.
+     * Creates a reader over {@code declaredChunkCount} result chunks of
+     * {@code queryId}. Opens the first chunk eagerly so failures surface here
+     * rather than mid-consumption.
      *
      * <p>
-     * A genuinely empty result (no chunks were produced) is detected by chunk
-     * 0 failing while {@code chunkCount} is 1 (the caller always passes at
-     * least 1 so a schema can be obtained) — in that case this reader exposes
-     * an empty schema and no batches, matching {@link FlightInfoReader}'s
-     * fallback for a FlightInfo with zero endpoints.
+     * A genuinely empty result (no chunks were produced) is detected by
+     * {@code declaredChunkCount} being 0 — in that case a chunk-0 fetch
+     * failure is treated as "no chunk was ever produced" and this reader
+     * exposes an empty schema and no batches, matching
+     * {@link FlightInfoReader}'s fallback for a FlightInfo with zero
+     * endpoints. When {@code declaredChunkCount} is 1 or more, a chunk-0
+     * fetch failure is a real error (timeout, auth failure, expiry, server
+     * error) and propagates instead of being swallowed.
      */
-    AsyncQueryResultReader(BufferAllocator allocator, SpiceClient client, String queryId, int chunkCount)
+    AsyncQueryResultReader(BufferAllocator allocator, SpiceClient client, String queryId, int declaredChunkCount)
             throws IOException {
         super(allocator);
         this.client = client;
         this.queryId = queryId;
-        this.chunkCount = chunkCount;
+        this.declaredChunkCount = declaredChunkCount;
+        this.chunkCount = Math.max(declaredChunkCount, 1);
         try {
             if (openChunk(0)) {
                 this.nextChunkIndex = 1;
@@ -109,16 +116,17 @@ final class AsyncQueryResultReader extends ArrowReader {
     /**
      * Opens chunk {@code index}, returning false only when this is chunk 0 of
      * a genuinely empty result (the runtime never produced it because
-     * {@code chunkCount} was declared as 0, and the caller bumped it to 1 to
-     * request a schema anyway). Any other failure propagates as an
-     * {@link IOException}.
+     * {@code declaredChunkCount} was 0, and this reader's own {@code chunkCount}
+     * was floored to 1 to request a schema anyway). Any other failure —
+     * including a chunk-0 fetch failure when a chunk was actually declared —
+     * propagates as an {@link IOException}.
      */
     private boolean openChunk(int index) throws IOException {
         byte[] chunk;
         try {
             chunk = client.asyncQueryResultChunk(queryId, index);
         } catch (ExecutionException e) {
-            if (index == 0 && chunkCount <= 1) {
+            if (index == 0 && declaredChunkCount == 0) {
                 return false;
             }
             throw new IOException("Failed to fetch result chunk " + index + " for async query " + queryId, e);
