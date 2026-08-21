@@ -31,6 +31,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -38,6 +39,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.apache.arrow.flight.Action;
 import org.apache.arrow.flight.CallHeaders;
 import org.apache.arrow.flight.CallStatus;
 import org.apache.arrow.flight.FlightDescriptor;
@@ -65,6 +67,9 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 
@@ -92,6 +97,8 @@ final class TestFlightSqlServer implements AutoCloseable {
     private volatile CallStatus injectedFailureStatus = CallStatus.UNAVAILABLE;
     private final AtomicBoolean rejectNextBearer = new AtomicBoolean();
     volatile long getFlightInfoDelayMs = 0;
+    private final AtomicInteger failNextGetAsyncQueryResult = new AtomicInteger();
+    private volatile CallStatus injectedAsyncQueryResultFailureStatus = CallStatus.UNAVAILABLE;
 
     // ==================== result shape ====================
     volatile int endpointCount = 1;
@@ -103,6 +110,16 @@ final class TestFlightSqlServer implements AutoCloseable {
 
     private final Set<String> validHandles = ConcurrentHashMap.newKeySet();
     private final AtomicLong handleCounter = new AtomicLong();
+
+    // ==================== async queries ====================
+    private static final Gson ASYNC_GSON = new Gson();
+    private final ConcurrentHashMap<String, AsyncQueryState> asyncQueries = new ConcurrentHashMap<>();
+    private final AtomicLong asyncQueryCounter = new AtomicLong();
+    final AtomicInteger submitAsyncQueryCalls = new AtomicInteger();
+    final AtomicInteger getAsyncQueryResultCalls = new AtomicInteger();
+
+    /** The JSON body of the last SubmitAsyncQuery action, for tests to assert on. */
+    volatile JsonObject lastSubmitAsyncQueryRequest;
 
     private final BufferAllocator allocator;
     private final FlightServer server;
@@ -183,6 +200,12 @@ final class TestFlightSqlServer implements AutoCloseable {
         this.failNextGetFlightInfo.set(count);
     }
 
+    /** The next N GetAsyncQueryResult calls fail with the given status, regardless of chunk availability. */
+    void failNextGetAsyncQueryResult(int count, CallStatus status) {
+        this.injectedAsyncQueryResultFailureStatus = status;
+        this.failNextGetAsyncQueryResult.set(count);
+    }
+
     /** Simulates a server restart: all existing prepared statement handles become unknown. */
     void invalidatePreparedStatements() {
         validHandles.clear();
@@ -191,6 +214,48 @@ final class TestFlightSqlServer implements AutoCloseable {
     /** The next call presenting a bearer token is rejected with UNAUTHENTICATED. */
     void rejectNextBearerToken() {
         rejectNextBearer.set(true);
+    }
+
+    /**
+     * Configures the status sequence {@code GetAsyncQueryStatus} returns for
+     * queryId: the submit response reports {@code sequence.get(0)}, and each
+     * subsequent status poll advances one entry, holding the last entry once
+     * exhausted.
+     */
+    void setAsyncQueryStatusSequence(String queryId, List<QueryStatus> sequence) {
+        stateFor(queryId).statusSequence = new ArrayList<>(sequence);
+    }
+
+    /** Configures the error reported once queryId's status reaches FAILED. */
+    void setAsyncQueryError(String queryId, String errorCode, String message) {
+        AsyncQueryState state = stateFor(queryId);
+        state.errorCode = errorCode;
+        state.errorMessage = message;
+    }
+
+    /**
+     * Configures the result chunks (pre-serialized Arrow IPC streams, one per
+     * chunk index) {@code GetAsyncQueryResult} returns for queryId, and the
+     * total_row_count the SUCCEEDED status response reports.
+     */
+    void setAsyncQueryChunks(String queryId, List<byte[]> chunks, long totalRowCount) {
+        AsyncQueryState state = stateFor(queryId);
+        state.chunks = new ArrayList<>(chunks);
+        state.totalRowCount = totalRowCount;
+    }
+
+    private AsyncQueryState stateFor(String queryId) {
+        return asyncQueries.computeIfAbsent(queryId, id -> new AsyncQueryState());
+    }
+
+    /** Mutable server-side state for one async query, configured by tests via the setters above. */
+    private static final class AsyncQueryState {
+        volatile List<QueryStatus> statusSequence = new ArrayList<>(Collections.singletonList(QueryStatus.SUCCEEDED));
+        final AtomicInteger statusPollIndex = new AtomicInteger(-1);
+        volatile String errorCode;
+        volatile String errorMessage;
+        volatile List<byte[]> chunks = Collections.emptyList();
+        volatile long totalRowCount;
     }
 
     /**
@@ -210,6 +275,19 @@ final class TestFlightSqlServer implements AutoCloseable {
         server.shutdown();
         server.awaitTermination();
         allocator.close();
+    }
+
+    private boolean maybeInjectAsyncQueryResultFailure(org.apache.arrow.flight.FlightProducer.StreamListener<Result> listener) {
+        int remaining = failNextGetAsyncQueryResult.get();
+        while (remaining > 0) {
+            if (failNextGetAsyncQueryResult.compareAndSet(remaining, remaining - 1)) {
+                listener.onError(
+                        injectedAsyncQueryResultFailureStatus.withDescription("injected failure").toRuntimeException());
+                return true;
+            }
+            remaining = failNextGetAsyncQueryResult.get();
+        }
+        return false;
     }
 
     private void maybeInjectGetFlightInfoFailure() {
@@ -360,6 +438,118 @@ final class TestFlightSqlServer implements AutoCloseable {
         public void getStreamStatement(FlightSql.TicketStatementQuery ticket,
                 CallContext context, ServerStreamListener listener) {
             serveData(parseEndpointIndex(ticket.getStatementHandle().toStringUtf8()), listener);
+        }
+
+        @Override
+        public void doAction(CallContext context, Action action, StreamListener<Result> listener) {
+            switch (action.getType()) {
+                case "SubmitAsyncQuery":
+                    handleSubmitAsyncQuery(action, listener);
+                    return;
+                case "GetAsyncQueryStatus":
+                    handleGetAsyncQueryStatus(action, listener);
+                    return;
+                case "GetAsyncQueryResult":
+                    handleGetAsyncQueryResult(action, listener);
+                    return;
+                case "CancelAsyncQuery":
+                    handleCancelAsyncQuery(action, listener);
+                    return;
+                default:
+                    // Preserves NoOpFlightSqlProducer's dispatch of the built-in
+                    // FlightSql actions (CreatePreparedStatement, etc.) to the
+                    // methods this Producer overrides above.
+                    super.doAction(context, action, listener);
+            }
+        }
+
+        private void handleSubmitAsyncQuery(Action action, StreamListener<Result> listener) {
+            submitAsyncQueryCalls.incrementAndGet();
+            lastSubmitAsyncQueryRequest = parseJson(action);
+            String queryId = "aq-" + asyncQueryCounter.incrementAndGet();
+            AsyncQueryState state = stateFor(queryId);
+            JsonObject response = new JsonObject();
+            response.addProperty("query_id", queryId);
+            response.addProperty("status", state.statusSequence.get(0).getWireValue());
+            respondJson(listener, response);
+        }
+
+        private void handleGetAsyncQueryStatus(Action action, StreamListener<Result> listener) {
+            String queryId = parseJson(action).get("query_id").getAsString();
+            AsyncQueryState state = asyncQueries.get(queryId);
+            if (state == null) {
+                listener.onError(CallStatus.NOT_FOUND.withDescription("unknown async query: " + queryId)
+                        .toRuntimeException());
+                return;
+            }
+            List<QueryStatus> sequence = state.statusSequence;
+            int idx = Math.max(0, Math.min(state.statusPollIndex.incrementAndGet(), sequence.size() - 1));
+            QueryStatus status = sequence.get(idx);
+
+            JsonObject response = new JsonObject();
+            response.addProperty("query_id", queryId);
+            response.addProperty("status", status.getWireValue());
+            if (status == QueryStatus.FAILED && state.errorMessage != null) {
+                JsonObject error = new JsonObject();
+                if (state.errorCode != null) {
+                    error.addProperty("error_code", state.errorCode);
+                }
+                error.addProperty("message", state.errorMessage);
+                response.add("error", error);
+            }
+            if (status == QueryStatus.SUCCEEDED) {
+                JsonObject result = new JsonObject();
+                result.addProperty("total_row_count", state.totalRowCount);
+                result.addProperty("total_chunk_count", state.chunks.size());
+                response.add("result", result);
+            }
+            respondJson(listener, response);
+        }
+
+        private void handleGetAsyncQueryResult(Action action, StreamListener<Result> listener) {
+            getAsyncQueryResultCalls.incrementAndGet();
+            if (maybeInjectAsyncQueryResultFailure(listener)) {
+                return;
+            }
+            JsonObject request = parseJson(action);
+            String queryId = request.get("query_id").getAsString();
+            int chunkIndex = request.get("chunk_index").getAsInt();
+            AsyncQueryState state = asyncQueries.get(queryId);
+            if (state == null || chunkIndex < 0 || chunkIndex >= state.chunks.size()) {
+                listener.onError(CallStatus.NOT_FOUND
+                        .withDescription("no result chunk " + chunkIndex + " for async query " + queryId)
+                        .toRuntimeException());
+                return;
+            }
+            listener.onNext(new Result(state.chunks.get(chunkIndex)));
+            listener.onCompleted();
+        }
+
+        private void handleCancelAsyncQuery(Action action, StreamListener<Result> listener) {
+            String queryId = parseJson(action).get("query_id").getAsString();
+            AsyncQueryState state = asyncQueries.get(queryId);
+            if (state == null) {
+                listener.onError(CallStatus.NOT_FOUND.withDescription("unknown async query: " + queryId)
+                        .toRuntimeException());
+                return;
+            }
+            state.statusSequence = Collections.singletonList(QueryStatus.CANCELLED);
+            state.statusPollIndex.set(0);
+
+            JsonObject response = new JsonObject();
+            response.addProperty("query_id", queryId);
+            response.addProperty("cancelled", true);
+            response.addProperty("status", QueryStatus.CANCELLED.getWireValue());
+            respondJson(listener, response);
+        }
+
+        private JsonObject parseJson(Action action) {
+            return JsonParser.parseString(new String(action.getBody(), StandardCharsets.UTF_8)).getAsJsonObject();
+        }
+
+        private void respondJson(StreamListener<Result> listener, JsonObject body) {
+            listener.onNext(new Result(ASYNC_GSON.toJson(body).getBytes(StandardCharsets.UTF_8)));
+            listener.onCompleted();
         }
     }
 

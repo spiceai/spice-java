@@ -358,6 +358,22 @@ try (SpiceClient client = SpiceClient.builder().build()) {
 
 See [ExampleIteratingResults.java](/src/main/java/ai/spice/example/ExampleIteratingResults.java) for a comprehensive example.
 
+### Async Queries
+
+`queryAsync`/`queryAsyncWithParams` submit a query for asynchronous execution and return an `AsyncQuery` handle instead of streaming results directly. This requires the Spice runtime to be running in distributed/scheduler mode; for the normal synchronous, streaming path use [`query`](#with-locally-running-spiceai-oss)/[`queryWithParams`](#parameterized-queries-recommended).
+
+```java
+try (SpiceClient client = SpiceClient.builder().build()) {
+    AsyncQuery asyncQuery = client.queryAsync("SELECT * FROM taxi_trips LIMIT 10;");
+
+    try (ArrowReader reader = asyncQuery.results()) { // blocks until the query completes
+        while (reader.loadNextBatch()) {
+            System.out.println(reader.getVectorSchemaRoot().contentToTSVString());
+        }
+    }
+}
+```
+
 ### Spice.ai Runtime commands
 
 #### Accelerated dataset refresh
