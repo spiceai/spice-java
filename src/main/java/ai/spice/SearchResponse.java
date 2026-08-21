@@ -1,5 +1,5 @@
 /*
-Copyright 2024 The Spice.ai OSS Authors
+Copyright 2026 The Spice.ai OSS Authors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,14 +22,37 @@ SOFTWARE.
 
 package ai.spice;
 
-public class Version {
-    /**
-     * spice-java SDK version, defined statically to support more platforms vs
-     * relying on .jar packaging
-     */
-    public static final String SPICE_JAVA_VERSION;
+import java.util.Collections;
+import java.util.List;
 
-    static {
-        SPICE_JAVA_VERSION = "0.8.0";
+import com.google.gson.annotations.SerializedName;
+
+/**
+ * The result of a single {@link SpiceClient#search(SearchRequest)} call.
+ */
+public class SearchResponse {
+
+    @SerializedName("results")
+    private List<SearchMatch> results;
+
+    @SerializedName("duration_ms")
+    private long durationMs;
+
+    /**
+     * The matches, ordered by descending score.
+     *
+     * @return the matches, or an empty list if the runtime returned none
+     */
+    public List<SearchMatch> getResults() {
+        return this.results == null ? Collections.emptyList() : this.results;
+    }
+
+    /**
+     * How long the runtime reported the search took.
+     *
+     * @return the duration in milliseconds
+     */
+    public long getDurationMs() {
+        return this.durationMs;
     }
 }

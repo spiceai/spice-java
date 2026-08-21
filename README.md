@@ -415,6 +415,45 @@ for (ConnectionDetails connection : client.runtimeStatus()) {
 `REFRESHING`, `SHUTTING_DOWN`, or `NOT_LOADED`. A status a newer runtime introduces maps to
 `UNKNOWN` rather than failing; `getRawStatus()` returns it verbatim.
 
+#### Search
+
+Use `search()` to find documents similar to a piece of text via the runtime's
+`/v1/search` endpoint. This runs against datasets with an embedding column and a
+loaded embedding model — see the
+[search and retrieval docs](https://docs.spice.ai/features/search-and-retrieval) for
+how to configure them. Supplying `withKeywords(...)` adds a lexical pass, which the
+runtime blends with the vector scores into a hybrid ranking.
+
+```java
+SpiceClient client = SpiceClient.builder()
+    ..
+    .build();
+
+SearchResponse response = client.search(new SearchRequest("food safety violations")
+    .withDatasets(Arrays.asList("restaurant_inspections"))
+    .withLimit(5));
+
+for (SearchMatch match : response.getResults()) {
+    System.out.printf("%s (score=%.3f)%n", match.getDataset(), match.getScore());
+}
+```
+
+### Natural Language to SQL (Nsql)
+
+Use `nsql()` to have the runtime's configured LLM translate a natural-language question
+into SQL and run it, or `nsqlGenerateSql()` to only generate the SQL without running it.
+Requires an LLM model configured in the Spicepod — see the
+[text-to-SQL docs](https://docs.spice.ai/features/text-to-sql).
+
+```java
+NsqlResponse response = client.nsql(new NsqlRequest("how many taxi trips were there yesterday?"));
+System.out.println(response.getSql());       // the SQL the model generated
+System.out.println(response.getData());      // the rows it returned, decoded from JSON
+
+// Inspect or edit the generated SQL without running it:
+String sql = client.nsqlGenerateSql(new NsqlRequest("how many taxi trips were there yesterday?"));
+```
+
 #### Active queries
 
 Use `listActiveQueries()` to see the synchronous queries currently running on the runtime,

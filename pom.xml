@@ -4,7 +4,7 @@
     <groupId>ai.spice</groupId>
     <artifactId>spiceai</artifactId>
     <packaging>jar</packaging>
-    <version>0.7.0</version>
+    <version>0.8.0</version>
     <name>Java Spice SDK</name>
     <url>https://github.com/spiceai/spice-java/</url>
     <description>Spice provides a unified SQL query interface and portable runtime to locally materialize, accelerate, and query datasets from any database, data warehouse, or data lake.</description>
@@ -46,7 +46,7 @@
         <!-- The last published release, which the japicmp API-compatibility
              gate compares against. Bump when releasing; the publish workflow
              fails if this still equals the version being released. -->
-        <japicmp.oldVersion>0.6.0</japicmp.oldVersion>
+        <japicmp.oldVersion>0.7.0</japicmp.oldVersion>
     </properties>
     <dependencyManagement>
         <dependencies>
