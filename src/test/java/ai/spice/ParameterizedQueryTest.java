@@ -60,7 +60,7 @@ public class ParameterizedQueryTest extends TestCase {
 
             // Test with float parameter - taxi_trips available in Spice Cloud
             String sql = "SELECT tpep_pickup_datetime, total_amount FROM taxi_trips WHERE total_amount > $1 ORDER BY total_amount LIMIT 5";
-            try (ArrowReader reader = spiceClient.queryWithParams(sql, 10.0)) {
+            try (ArrowReader reader = spiceClient.sqlWithParams(sql, 10.0)) {
                 int totalRows = 0;
 
                 while (reader.loadNextBatch()) {
@@ -86,7 +86,7 @@ public class ParameterizedQueryTest extends TestCase {
 
             // Test with float parameter on tpch.orders
             String sql = "SELECT o_orderkey, o_totalprice FROM tpch.orders WHERE o_totalprice > $1 ORDER BY o_totalprice LIMIT 5";
-            try (ArrowReader reader = spiceClient.queryWithParams(sql, 10000.0)) {
+            try (ArrowReader reader = spiceClient.sqlWithParams(sql, 10000.0)) {
                 int totalRows = 0;
 
                 while (reader.loadNextBatch()) {
@@ -116,7 +116,7 @@ public class ParameterizedQueryTest extends TestCase {
         try (SpiceClient spiceClient = SpiceClient.builder().withMaxRetries(1).build()) {
 
             String sql = "SELECT o_orderkey, o_totalprice FROM tpch.orders WHERE o_totalprice > $1 AND o_custkey > $2 LIMIT 5";
-            try (ArrowReader reader = spiceClient.queryWithParams(sql, 5000.0, 100)) {
+            try (ArrowReader reader = spiceClient.sqlWithParams(sql, 5000.0, 100)) {
                 int totalRows = 0;
 
                 while (reader.loadNextBatch()) {
@@ -144,7 +144,7 @@ public class ParameterizedQueryTest extends TestCase {
 
             // Use c_mktsegment which is a string column in tpch.customer
             String sql = "SELECT c_custkey, c_mktsegment FROM tpch.customer WHERE c_mktsegment = $1 LIMIT 5";
-            try (ArrowReader reader = spiceClient.queryWithParams(sql, "BUILDING")) {
+            try (ArrowReader reader = spiceClient.sqlWithParams(sql, "BUILDING")) {
                 int totalRows = 0;
 
                 while (reader.loadNextBatch()) {
@@ -172,7 +172,7 @@ public class ParameterizedQueryTest extends TestCase {
 
             // Use explicit int64 type on tpch.customer
             String sql = "SELECT c_custkey, c_name, c_nationkey FROM tpch.customer WHERE c_nationkey = $1 LIMIT 5";
-            try (ArrowReader reader = spiceClient.queryWithParams(sql, Param.int64(1))) {
+            try (ArrowReader reader = spiceClient.sqlWithParams(sql, Param.int64(1))) {
                 int totalRows = 0;
 
                 while (reader.loadNextBatch()) {
@@ -198,7 +198,7 @@ public class ParameterizedQueryTest extends TestCase {
         try (SpiceClient spiceClient = SpiceClient.builder().withMaxRetries(1).build()) {
 
             String sql = "SELECT o_orderkey, o_totalprice FROM tpch.orders WHERE o_totalprice > $1 AND o_orderstatus = $2 LIMIT 5";
-            try (ArrowReader reader = spiceClient.queryWithParams(sql,
+            try (ArrowReader reader = spiceClient.sqlWithParams(sql,
                     Param.float64(5000.0),
                     Param.string("O"))) {
                 int totalRows = 0;
@@ -292,7 +292,7 @@ public class ParameterizedQueryTest extends TestCase {
     public void testNullSqlThrows() throws Exception {
         try (SpiceClient spiceClient = SpiceClient.builder().withMaxRetries(1).build()) {
             try {
-                spiceClient.queryWithParams(null, 1);
+                spiceClient.sqlWithParams(null, 1);
                 fail("Expected IllegalArgumentException");
             } catch (IllegalArgumentException e) {
                 assertTrue(e.getMessage().contains("No SQL query provided"));
@@ -312,7 +312,7 @@ public class ParameterizedQueryTest extends TestCase {
     public void testEmptySqlThrows() throws Exception {
         try (SpiceClient spiceClient = SpiceClient.builder().withMaxRetries(1).build()) {
             try {
-                spiceClient.queryWithParams("", 1);
+                spiceClient.sqlWithParams("", 1);
                 fail("Expected IllegalArgumentException");
             } catch (IllegalArgumentException e) {
                 assertTrue(e.getMessage().contains("No SQL query provided"));

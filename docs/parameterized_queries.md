@@ -18,7 +18,7 @@ The parameterized query system supports three modes of parameter usage:
 
 ```java
 // Types are automatically inferred from Java values
-ArrowReader reader = client.queryWithParams(
+ArrowReader reader = client.sqlWithParams(
     "SELECT * FROM table WHERE id = $1 AND name = $2",
     42,      // Inferred as Int32
     "test"   // Inferred as Utf8
@@ -29,7 +29,7 @@ ArrowReader reader = client.queryWithParams(
 
 ```java
 // Explicitly specify Arrow types for precise control
-ArrowReader reader = client.queryWithParams(
+ArrowReader reader = client.sqlWithParams(
     "SELECT * FROM table WHERE id = $1 AND created = $2",
     Param.int32(42),
     Param.timestamp(LocalDateTime.now(), TimeUnit.MICROSECOND, "UTC")
@@ -101,12 +101,12 @@ ArrowReader reader = client.queryWithParams(
 
 ## API Methods
 
-### queryWithParams
+### sqlWithParams
 
 Primary method for parameterized queries:
 
 ```java
-public ArrowReader queryWithParams(String sql, Object... params) throws ExecutionException
+public ArrowReader sqlWithParams(String sql, Object... params) throws ExecutionException
 ```
 
 **Parameters:**
@@ -136,7 +136,7 @@ public class Example {
         try (SpiceClient client = SpiceClient.builder().build()) {
             
             // Simple query with inferred types
-            ArrowReader reader = client.queryWithParams(
+            ArrowReader reader = client.sqlWithParams(
                 "SELECT * FROM customers WHERE age > $1 AND country = $2 LIMIT $3",
                 18,      // int -> Int32
                 "USA",   // String -> Utf8
@@ -164,7 +164,7 @@ public class Example {
         try (SpiceClient client = SpiceClient.builder().build()) {
             
             // Use explicit types when precision matters
-            ArrowReader reader = client.queryWithParams(
+            ArrowReader reader = client.sqlWithParams(
                 "SELECT * FROM orders WHERE order_id = $1 AND quantity = $2",
                 Param.int32(12345),  // Explicitly Int32
                 Param.int16((short) 10)  // Explicitly Int16
@@ -192,7 +192,7 @@ public class Example {
             // Query with timestamp
             LocalDateTime startTime = LocalDateTime.of(2024, 1, 1, 0, 0, 0);
             
-            ArrowReader reader = client.queryWithParams(
+            ArrowReader reader = client.sqlWithParams(
                 "SELECT * FROM events WHERE created_at > $1",
                 Param.timestamp(startTime, TimeUnit.MICROSECOND, "UTC")
             );
@@ -207,7 +207,7 @@ public class Example {
 ### Example 4: Mixed Inferred and Explicit Types
 
 ```java
-ArrowReader reader = client.queryWithParams(
+ArrowReader reader = client.sqlWithParams(
     "SELECT * FROM table WHERE id = $1 AND name = $2 AND created = $3 AND active = $4",
     42,                                        // Inferred as Int32
     Param.string("test"),                      // Explicit Utf8
@@ -224,7 +224,7 @@ import java.math.BigDecimal;
 // Working with high-precision decimal numbers
 BigDecimal amount = new BigDecimal("12345.67");
 
-ArrowReader reader = client.queryWithParams(
+ArrowReader reader = client.sqlWithParams(
     "SELECT * FROM transactions WHERE amount >= $1",
     Param.decimal128(amount, 10, 2)  // 10 precision, 2 scale
 );
@@ -244,7 +244,7 @@ Param customParam = Param.of(
     new ArrowType.Timestamp(TimeUnit.NANOSECOND, "America/New_York")
 );
 
-ArrowReader reader = client.queryWithParams(
+ArrowReader reader = client.sqlWithParams(
     "SELECT * FROM table WHERE ts = $1",
     customParam
 );
@@ -252,7 +252,7 @@ ArrowReader reader = client.queryWithParams(
 
 ## Type Inference Rules
 
-When a plain Java value is passed to `queryWithParams()`, the SDK applies these inference rules:
+When a plain Java value is passed to `sqlWithParams()`, the SDK applies these inference rules:
 
 1. **Integers**: Based on the Java type (`byte` → Int8, `short` → Int16, `int` → Int32, `long` → Int64)
 2. **Floating Point**: `float` → Float32, `double` → Float64
@@ -281,7 +281,7 @@ The system provides clear error messages for type mismatches:
 
 ```java
 try {
-    ArrowReader reader = client.queryWithParams("SELECT $1", unsupportedType);
+    ArrowReader reader = client.sqlWithParams("SELECT $1", unsupportedType);
 } catch (ExecutionException e) {
     // Error will indicate: "Unsupported parameter type: <type>"
     System.err.println("Query failed: " + e.getMessage());
@@ -309,10 +309,10 @@ Parameterized queries protect against SQL injection:
 // ❌ Vulnerable to SQL injection
 String userId = getUserInput(); // Could be: "1 OR 1=1"
 String sql = "SELECT * FROM users WHERE id = " + userId;
-FlightStream stream = client.query(sql);
+FlightStream stream = client.sql(sql);
 
 // ✅ Safe from SQL injection
-ArrowReader reader = client.queryWithParams(
+ArrowReader reader = client.sqlWithParams(
     "SELECT * FROM users WHERE id = $1",
     userId
 );
@@ -326,10 +326,10 @@ If you get type mismatch errors, use explicit types:
 
 ```java
 // If inference picks wrong type
-ArrowReader reader = client.queryWithParams("SELECT $1", 42);  // Might infer as Int32
+ArrowReader reader = client.sqlWithParams("SELECT $1", 42);  // Might infer as Int32
 
 // Use explicit type instead
-ArrowReader reader = client.queryWithParams("SELECT $1", Param.int64(42));
+ArrowReader reader = client.sqlWithParams("SELECT $1", Param.int64(42));
 ```
 
 ### Unsupported Type Error
@@ -338,6 +338,6 @@ If you encounter "unsupported parameter type", use `Param.of` with explicit Arro
 
 ```java
 Param param = Param.of(value, myCustomArrowType);
-ArrowReader reader = client.queryWithParams("SELECT $1", param);
+ArrowReader reader = client.sqlWithParams("SELECT $1", param);
 ```
 

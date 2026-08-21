@@ -59,7 +59,7 @@ public class Example {
         try (SpiceClient client = SpiceClient.builder()
                 .build()) {
 
-            FlightStream stream = client.query("SELECT * FROM taxi_trips LIMIT 10;");
+            FlightStream stream = client.sql("SELECT * FROM taxi_trips LIMIT 10;");
 
             while (stream.next()) {
                 try (VectorSchemaRoot batches = stream.getRoot()) {
@@ -91,7 +91,7 @@ public class Example {
                 .withSpiceCloud()
                 .build()) {
 
-            FlightStream stream = client.query("SELECT * FROM eth.recent_blocks LIMIT 10;");
+            FlightStream stream = client.sql("SELECT * FROM eth.recent_blocks LIMIT 10;");
 
             while (stream.next()) {
                 try (VectorSchemaRoot batches = stream.getRoot()) {
@@ -179,7 +179,7 @@ public class Example {
         try (SpiceClient client = SpiceClient.builder().build()) {
 
             // Query with automatic type inference
-            ArrowReader reader = client.queryWithParams(
+            ArrowReader reader = client.sqlWithParams(
                 "SELECT * FROM taxi_trips WHERE trip_distance > $1 LIMIT 10",
                 5.0);  // Double is inferred as Float64
 
@@ -201,7 +201,7 @@ public class Example {
 Use positional placeholders ($1, $2, etc.) for multiple parameters:
 
 ```java
-ArrowReader reader = client.queryWithParams(
+ArrowReader reader = client.sqlWithParams(
     "SELECT * FROM taxi_trips WHERE trip_distance > $1 AND fare_amount > $2 LIMIT 10",
     5.0, 20.0);
 ```
@@ -214,7 +214,7 @@ For precise control over Arrow types, use the `Param` factory methods:
 import ai.spice.Param;
 
 // Explicit type specification
-ArrowReader reader = client.queryWithParams(
+ArrowReader reader = client.sqlWithParams(
     "SELECT * FROM orders WHERE order_id = $1 AND amount >= $2",
     Param.int64(12345),
     Param.decimal128(new BigDecimal("99.99"), 10, 2));
@@ -274,13 +274,13 @@ SpiceClient client = SpiceClient.builder()
 // io.grpc.StatusRuntimeException with Status.UNAVAILABLE,
 // SSLHandshakeException, or similar transport-level errors.
 try {
-    try (FlightStream stream = client.query(sql)) {
+    try (FlightStream stream = client.sql(sql)) {
         // process results...
     }
 } catch (ExecutionException e) {
     if (isTransportFailure(e.getCause())) {
         client.reset();                     // discard bad transport, reconnect immediately
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             // process results with fresh connection...
         }
     } else {
@@ -308,7 +308,7 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
 
 try (SpiceClient client = SpiceClient.builder().build()) {
-    FlightStream stream = client.query("SELECT * FROM taxi_trips LIMIT 10;");
+    FlightStream stream = client.sql("SELECT * FROM taxi_trips LIMIT 10;");
 
     while (stream.next()) {
         try (VectorSchemaRoot root = stream.getRoot()) {
@@ -357,6 +357,22 @@ try (SpiceClient client = SpiceClient.builder().build()) {
 ```
 
 See [ExampleIteratingResults.java](/src/main/java/ai/spice/example/ExampleIteratingResults.java) for a comprehensive example.
+
+### Async Queries
+
+`query`/`queryWithParams` submit a query for asynchronous execution and return an `AsyncQuery` handle instead of streaming results directly. This requires the Spice runtime to be running in distributed/scheduler mode; for the normal synchronous, streaming path use [`sql`](#with-locally-running-spiceai-oss)/[`sqlWithParams`](#parameterized-queries-recommended).
+
+```java
+try (SpiceClient client = SpiceClient.builder().build()) {
+    AsyncQuery asyncQuery = client.query("SELECT * FROM taxi_trips LIMIT 10;");
+
+    try (ArrowReader reader = asyncQuery.results()) { // blocks until the query completes
+        while (reader.loadNextBatch()) {
+            System.out.println(reader.getVectorSchemaRoot().contentToTSVString());
+        }
+    }
+}
+```
 
 ### Spice.ai Runtime commands
 

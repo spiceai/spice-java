@@ -36,15 +36,18 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.arrow.flight.Action;
 import org.apache.arrow.flight.CallOption;
 import org.apache.arrow.flight.CallOptions;
 import org.apache.arrow.flight.CallStatus;
@@ -56,6 +59,7 @@ import org.apache.arrow.flight.FlightInfo;
 import org.apache.arrow.flight.FlightRuntimeException;
 import org.apache.arrow.flight.FlightStatusCode;
 import org.apache.arrow.flight.FlightStream;
+import org.apache.arrow.flight.Result;
 import org.apache.arrow.flight.Ticket;
 import org.apache.arrow.flight.auth2.BasicAuthCredentialWriter;
 import org.apache.arrow.flight.auth2.ClientBearerHeaderHandler;
@@ -147,6 +151,13 @@ public class SpiceClient implements AutoCloseable {
     static final int DEFAULT_CHANNEL_COUNT = 1;
     /** Default maximum number of idle prepared statements kept for reuse. */
     static final int DEFAULT_STATEMENT_CACHE_SIZE = 64;
+
+    // Flight DoAction action types for async queries, served by the Spice
+    // runtime when running in distributed/scheduler mode.
+    private static final String ACTION_SUBMIT_ASYNC_QUERY = "SubmitAsyncQuery";
+    private static final String ACTION_GET_ASYNC_QUERY_STATUS = "GetAsyncQueryStatus";
+    private static final String ACTION_GET_ASYNC_QUERY_RESULT = "GetAsyncQueryResult";
+    private static final String ACTION_CANCEL_ASYNC_QUERY = "CancelAsyncQuery";
 
     // Retry backoff: exponential (multiplier * 2^attempt) capped at a maximum,
     // plus a random jitter so a fleet of clients does not retry in lockstep.
@@ -317,15 +328,22 @@ public class SpiceClient implements AutoCloseable {
         /** The underlying transport, retained for graceful retirement. */
         final ManagedChannel grpcChannel;
         final FlightSqlClient client;
+        /**
+         * The same connection's raw Flight client, used for RPCs FlightSqlClient
+         * does not expose — currently only {@code DoAction} for async queries.
+         * Closing {@link #client} closes this too; do not close it separately.
+         */
+        final FlightClient rawClient;
         /** Options for control-plane RPCs (GetFlightInfo, prepare, DoPut): auth + optional timeout. */
         final CallOption[] callOptions;
         /** Options for DoGet streams: auth only — a deadline would kill long-running result streams. */
         final CallOption[] streamOptions;
 
-        FlightChannel(ManagedChannel grpcChannel, FlightSqlClient client, CallOption[] callOptions,
-                CallOption[] streamOptions) {
+        FlightChannel(ManagedChannel grpcChannel, FlightSqlClient client, FlightClient rawClient,
+                CallOption[] callOptions, CallOption[] streamOptions) {
             this.grpcChannel = grpcChannel;
             this.client = client;
+            this.rawClient = rawClient;
             this.callOptions = callOptions;
             this.streamOptions = streamOptions;
         }
@@ -555,7 +573,7 @@ public class SpiceClient implements AutoCloseable {
             }
             CallOption[] callOptions = options.toArray(new CallOption[0]);
 
-            return new FlightChannel(channel, new FlightSqlClient(client), callOptions, streamOptions);
+            return new FlightChannel(channel, new FlightSqlClient(client), client, callOptions, streamOptions);
         } catch (Exception e) {
             // Ensure the channel is shut down if client creation or handshake fails
             // to avoid leaking threads and file descriptors on repeated rebuild attempts.
@@ -599,7 +617,7 @@ public class SpiceClient implements AutoCloseable {
      * Resets the underlying gRPC transport by closing the current Flight channels and
      * cached prepared statements, then immediately establishes fresh connections with
      * a new DNS lookup and TLS handshake.
-     * This ensures the next {@link #query(String)} or {@link #queryWithParams(String, Object...)}
+     * This ensures the next {@link #sql(String)} or {@link #sqlWithParams(String, Object...)}
      * call does not incur connection setup overhead.
      *
      * <p>Use this method to recover from unrecoverable transport failures such as:</p>
@@ -612,11 +630,11 @@ public class SpiceClient implements AutoCloseable {
      * <p>Example usage for long-lived clients:</p>
      * <pre>{@code
      * try {
-     *     return client.query(sql);
+     *     return client.sql(sql);
      * } catch (ExecutionException e) {
      *     if (isTransportFailure(e.getCause())) {
      *         client.reset();
-     *         return client.query(sql); // retry with fresh connection
+     *         return client.sql(sql); // retry with fresh connection
      *     }
      *     throw e;
      * }
@@ -789,13 +807,19 @@ public class SpiceClient implements AutoCloseable {
     }
 
     /**
-     * Executes a sql query
+     * Runs sql against the Flight endpoint and streams the results back
+     * synchronously.
+     *
+     * <p>
+     * Use {@link #query(String)} instead to submit sql for asynchronous
+     * execution on the runtime and poll for completion, which requires the
+     * runtime to be running in distributed/scheduler mode.
      *
      * @param sql the SQL query to execute
      * @return a FlightStream with the query results
      * @throws ExecutionException if there is an error executing the query
      */
-    public FlightStream query(String sql) throws ExecutionException {
+    public FlightStream sql(String sql) throws ExecutionException {
         if (Strings.isNullOrEmpty(sql)) {
             throw new IllegalArgumentException("No SQL query provided");
         }
@@ -844,15 +868,20 @@ public class SpiceClient implements AutoCloseable {
      *
      * <pre>
      * // With automatic type inference
-     * ArrowReader reader = client.queryWithParams(
+     * ArrowReader reader = client.sqlWithParams(
      *     "SELECT * FROM table WHERE id = $1 AND name = $2",
      *     123, "test");
      *
      * // With explicit types
-     * ArrowReader reader = client.queryWithParams(
+     * ArrowReader reader = client.sqlWithParams(
      *     "SELECT * FROM table WHERE id = $1 AND amount = $2",
      *     Param.int32(123), Param.float64(99.99));
      * </pre>
+     *
+     * <p>
+     * Use {@link #queryWithParams(String, Object...)} instead to submit the
+     * parameterized query for asynchronous execution on the runtime, which
+     * requires distributed/scheduler mode.
      *
      * @param sql    the SQL query with positional parameter placeholders ($1, $2,
      *               etc.)
@@ -861,7 +890,7 @@ public class SpiceClient implements AutoCloseable {
      *         closing the reader.
      * @throws ExecutionException if there is an error executing the query
      */
-    public ArrowReader queryWithParams(String sql, Object... params) throws ExecutionException {
+    public ArrowReader sqlWithParams(String sql, Object... params) throws ExecutionException {
         if (Strings.isNullOrEmpty(sql)) {
             throw new IllegalArgumentException("No SQL query provided");
         }
@@ -1667,12 +1696,151 @@ public class SpiceClient implements AutoCloseable {
     }
 
     /**
+     * Submits {@code sql} to the Spice runtime for asynchronous execution and
+     * returns a handle for polling status and retrieving results.
+     *
+     * <p>
+     * Async queries require the runtime to be running in distributed/scheduler
+     * mode ({@code spiced --role scheduler} with
+     * {@code runtime.scheduler.state_location} configured); otherwise the
+     * runtime reports an error indicating async queries are only available in
+     * cluster mode.
+     *
+     * <p>
+     * Use {@link #sql(String)} for the normal synchronous, streaming query
+     * path.
+     *
+     * @param sql the SQL query to submit
+     * @return a handle to the submitted query
+     * @throws ExecutionException if the query could not be submitted
+     */
+    public AsyncQuery query(String sql) throws ExecutionException {
+        return submitAsyncQuery(sql, null);
+    }
+
+    /**
+     * Submits a parameterized query for asynchronous execution. Parameters are
+     * bound positionally ($1, $2, ...) and sent to the runtime as a JSON array,
+     * so each parameter must be a value Gson can encode meaningfully as JSON
+     * (numbers, strings, booleans, lists) — this bypasses the Arrow-typed
+     * parameter binding {@link #sqlWithParams(String, Object...)} uses, so
+     * temporal and decimal types are not given special handling here.
+     *
+     * <p>
+     * Use {@link #sqlWithParams(String, Object...)} for the normal
+     * synchronous, streaming parameterized query path.
+     *
+     * @param sql    the SQL query with positional parameter placeholders ($1, $2,
+     *               etc.)
+     * @param params the parameter values
+     * @return a handle to the submitted query
+     * @throws ExecutionException if the query could not be submitted
+     */
+    public AsyncQuery queryWithParams(String sql, Object... params) throws ExecutionException {
+        return submitAsyncQuery(sql, (params != null && params.length > 0) ? params : null);
+    }
+
+    private AsyncQuery submitAsyncQuery(String sql, Object[] params) throws ExecutionException {
+        if (Strings.isNullOrEmpty(sql)) {
+            throw new IllegalArgumentException("No SQL query provided");
+        }
+        if (closed) {
+            throw new IllegalStateException("Cannot query with a closed SpiceClient");
+        }
+
+        JsonObject request = new JsonObject();
+        request.addProperty("sql", sql);
+        if (params != null) {
+            request.add("parameters", GSON.toJsonTree(params));
+        }
+
+        logger.debug("Submitting async query: {}", sql);
+        byte[] body = doFlightAction(ACTION_SUBMIT_ASYNC_QUERY, request);
+        JsonObject response = parseAsyncActionResponse(body, "submit async query response");
+        String queryId = optionalString(response, "query_id");
+        if (Strings.isNullOrEmpty(queryId)) {
+            throw new ExecutionException("The runtime did not return a query_id for the submitted async query", null);
+        }
+        QueryStatus status = QueryStatus.fromWireValue(optionalString(response, "status"));
+        logger.debug("Async query submitted: queryId={}, status={}", queryId, status);
+        return new AsyncQuery(this, queryId, status);
+    }
+
+    /**
+     * Fetches the current status (and, when terminal, error/result metadata) of
+     * an async query. Package-private: called by {@link AsyncQuery}.
+     */
+    JsonObject asyncQueryStatus(String queryId) throws ExecutionException {
+        return asyncQueryStatus(queryId, null);
+    }
+
+    /**
+     * Fetches the current status of an async query, bounding the RPC to
+     * {@code perCallTimeout} when given. Package-private: called by
+     * {@link AsyncQuery#waitForCompletion(java.time.Duration)} so a stalled
+     * poll cannot outlive the caller's remaining wait budget.
+     */
+    JsonObject asyncQueryStatus(String queryId, java.time.Duration perCallTimeout) throws ExecutionException {
+        JsonObject request = new JsonObject();
+        request.addProperty("query_id", queryId);
+        byte[] body = doFlightAction(ACTION_GET_ASYNC_QUERY_STATUS, request, false, perCallTimeout);
+        return parseAsyncActionResponse(body, "async query status response");
+    }
+
+    /**
+     * Requests cancellation of an async query. Package-private: called by
+     * {@link AsyncQuery}.
+     */
+    JsonObject asyncQueryCancel(String queryId) throws ExecutionException {
+        JsonObject request = new JsonObject();
+        request.addProperty("query_id", queryId);
+        byte[] body = doFlightAction(ACTION_CANCEL_ASYNC_QUERY, request);
+        return parseAsyncActionResponse(body, "cancel async query response");
+    }
+
+    /**
+     * Fetches one chunk of an async query's results as a self-contained Arrow
+     * IPC stream. Package-private: called by {@link AsyncQueryResultReader}.
+     */
+    byte[] asyncQueryResultChunk(String queryId, int chunkIndex) throws ExecutionException {
+        JsonObject request = new JsonObject();
+        request.addProperty("query_id", queryId);
+        request.addProperty("chunk_index", chunkIndex);
+        // Result downloads are not bounded by the planning/query timeout baked
+        // into callOptions (see SpiceClientBuilder's withQueryTimeout docs) —
+        // use the auth-only streamOptions, matching how the sync query path
+        // downloads results.
+        return doFlightAction(ACTION_GET_ASYNC_QUERY_RESULT, request, true);
+    }
+
+    /**
+     * The buffer allocator backing this client's Flight channels.
+     * Package-private: used by {@link AsyncQueryResultReader} to decode result
+     * chunks with the same allocator as the rest of the client.
+     */
+    BufferAllocator allocator() {
+        return this.allocator;
+    }
+
+    private static JsonObject parseAsyncActionResponse(byte[] body, String description) throws ExecutionException {
+        try {
+            JsonElement root = JsonParser.parseString(body == null ? "" : new String(body, java.nio.charset.StandardCharsets.UTF_8));
+            if (root == null || !root.isJsonObject()) {
+                throw new ExecutionException("The runtime returned an unexpected " + description, null);
+            }
+            return root.getAsJsonObject();
+        } catch (JsonSyntaxException e) {
+            throw new ExecutionException("The runtime returned a malformed " + description, e);
+        }
+    }
+
+    /**
      * Lists the synchronous queries currently running on the runtime by calling
      * {@code GET /v1/sql/active}.
      *
      * <p>
-     * Synchronous queries are the ones started by {@link #query(String)},
-     * {@link #queryWithParams(String, Object...)}, or issued directly over Flight
+     * Synchronous queries are the ones started by {@link #sql(String)},
+     * {@link #sqlWithParams(String, Object...)}, or issued directly over Flight
      * SQL, HTTP, NSQL, or Search. The runtime does not return a query's ID to the
      * client that submitted it, so this is the only way to discover the ID that
      * {@link #cancelActiveQuery(String)} needs.
@@ -1882,6 +2050,92 @@ public class SpiceClient implements AutoCloseable {
     }
 
     /**
+     * Performs a Flight {@code DoAction} with a JSON-encoded request body and
+     * returns the concatenated {@code Result} bodies, wrapping any failure into
+     * an {@link ExecutionException} (this file's convention for every public
+     * method). On {@code UNAUTHENTICATED}, re-authenticates and retries the
+     * action exactly once on the fresh channel — matching the automatic
+     * re-handshake-and-retry behavior of the sync query paths — before giving
+     * up. Does not retry on any other error (matching gospice's behavior, which
+     * also does not retry {@code DoAction}); callers that need retries on
+     * transient errors can call the {@code AsyncQuery} method again.
+     */
+    private byte[] doFlightAction(String actionType, JsonObject request) throws ExecutionException {
+        return doFlightAction(actionType, request, false, null);
+    }
+
+    private byte[] doFlightAction(String actionType, JsonObject request, boolean useStreamOptions)
+            throws ExecutionException {
+        return doFlightAction(actionType, request, useStreamOptions, null);
+    }
+
+    private byte[] doFlightAction(String actionType, JsonObject request, boolean useStreamOptions,
+            java.time.Duration perCallTimeout) throws ExecutionException {
+        byte[] requestBody = GSON.toJson(request).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        FlightChannel[] snapshot = currentChannels();
+        try {
+            return doFlightActionOnce(actionType, requestBody, snapshot, useStreamOptions, perCallTimeout);
+        } catch (FlightRuntimeException e) {
+            maybeRebuildOnAuthError(e, snapshot);
+            if (e.status().code() == FlightStatusCode.UNAUTHENTICATED && !Strings.isNullOrEmpty(apiKey)) {
+                try {
+                    FlightChannel[] rebuilt = currentChannels();
+                    return doFlightActionOnce(actionType, requestBody, rebuilt, useStreamOptions, perCallTimeout);
+                } catch (RuntimeException retryError) {
+                    throw wrapFlightFailure(actionType, retryError, perCallTimeout);
+                }
+            }
+            throw wrapFlightFailure(actionType, e, perCallTimeout);
+        } catch (RuntimeException e) {
+            throw wrapFlightFailure(actionType, e, perCallTimeout);
+        }
+    }
+
+    /**
+     * Wraps a failed Flight action into an {@link ExecutionException}, reporting
+     * it as a timeout (rather than a generic transport failure) when
+     * {@code perCallTimeout} was set and the RPC itself was the thing that
+     * exceeded it — otherwise a caller bounding a poll to its remaining wait
+     * budget (see {@link AsyncQuery#waitForCompletion(java.time.Duration)}) sees
+     * a misleading "Failed to perform" error instead of a timeout.
+     */
+    private ExecutionException wrapFlightFailure(String actionType, RuntimeException e,
+            java.time.Duration perCallTimeout) {
+        if (perCallTimeout != null && e instanceof FlightRuntimeException
+                && ((FlightRuntimeException) e).status().code() == FlightStatusCode.TIMED_OUT) {
+            return new ExecutionException("Timed out waiting for a response to " + actionType, e);
+        }
+        return new ExecutionException("Failed to perform " + actionType + " due to error: " + e.toString(), e);
+    }
+
+    private byte[] doFlightActionOnce(String actionType, byte[] requestBody, FlightChannel[] snapshot,
+            boolean useStreamOptions, java.time.Duration perCallTimeout) {
+        FlightChannel channel = selectChannel(snapshot);
+        CallOption[] baseOptions = useStreamOptions ? channel.streamOptions : channel.callOptions;
+        CallOption[] options = baseOptions;
+        if (perCallTimeout != null) {
+            // Appended last so it overrides any queryTimeout already baked into
+            // callOptions: the caller's remaining wait budget is a tighter,
+            // more specific bound than the general planning-timeout default.
+            // Rounded up rather than truncated, and floored at 1ms: Duration#toMillis()
+            // truncates toward zero, so a sub-millisecond positive remainder would
+            // otherwise become a 0ms timeout, which gRPC treats as "expire immediately"
+            // rather than "no deadline", turning a live poll into a spurious failure.
+            long timeoutMillis = Math.max(1, (perCallTimeout.toNanos() + 999_999) / 1_000_000);
+            options = java.util.Arrays.copyOf(baseOptions, baseOptions.length + 1);
+            options[baseOptions.length] = CallOptions.timeout(timeoutMillis,
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
+        Iterator<Result> results = channel.rawClient.doAction(new Action(actionType, requestBody), options);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        while (results.hasNext()) {
+            byte[] resultBody = results.next().getBody();
+            out.write(resultBody, 0, resultBody.length);
+        }
+        return out.toByteArray();
+    }
+
+    /**
      * Reports whether {@code value} has the canonical UUID shape: 36 characters,
      * hexadecimal digits throughout except literal {@code -} at positions 8, 13,
      * 18, and 23.
@@ -1957,7 +2211,7 @@ public class SpiceClient implements AutoCloseable {
      *
      * <p>
      * Use it to inspect or edit the query before running it, or to run it
-     * through {@link #query(String)} or {@link #queryWithParams(String, Object...)}
+     * through {@link #sql(String)} or {@link #sqlWithParams(String, Object...)}
      * so the results arrive as Arrow rather than decoded JSON.
      *
      * @param request the natural-language query
@@ -2035,8 +2289,8 @@ public class SpiceClient implements AutoCloseable {
                         .toRuntimeException();
             }
             if (endpoints.size() > 1) {
-                logger.warn("Server returned {} endpoints; query() consumes only the first. "
-                        + "Use queryWithParams() (ArrowReader) to consume all endpoints.", endpoints.size());
+                logger.warn("Server returned {} endpoints; sql() consumes only the first. "
+                        + "Use sqlWithParams() (ArrowReader) to consume all endpoints.", endpoints.size());
             }
             Ticket ticket = endpoints.get(0).getTicket();
             return channel.client.getStream(ticket, channel.streamOptions);

@@ -78,7 +78,7 @@ public class ExampleParameterizedQueries {
         // - 10.0 (Double) -> Float64
         String sql = "SELECT trip_distance, fare_amount FROM taxi_trips WHERE trip_distance > $1 ORDER BY trip_distance LIMIT 5";
 
-        try (ArrowReader reader = client.queryWithParams(sql, 10.0)) {
+        try (ArrowReader reader = client.sqlWithParams(sql, 10.0)) {
             printResults(reader);
         }
     }
@@ -93,7 +93,7 @@ public class ExampleParameterizedQueries {
                 + "WHERE trip_distance > $1 AND fare_amount > $2 "
                 + "ORDER BY trip_distance LIMIT 5";
 
-        try (ArrowReader reader = client.queryWithParams(sql, 5.0, 20.0)) {
+        try (ArrowReader reader = client.sqlWithParams(sql, 5.0, 20.0)) {
             printResults(reader);
         }
     }
@@ -108,7 +108,7 @@ public class ExampleParameterizedQueries {
                 + "WHERE payment_type = $1 ORDER BY trip_distance LIMIT 5";
 
         // Use Param.int64() to explicitly specify Int64 type
-        try (ArrowReader reader = client.queryWithParams(sql, Param.int64(1))) {
+        try (ArrowReader reader = client.sqlWithParams(sql, Param.int64(1))) {
             printResults(reader);
         }
     }
@@ -122,7 +122,7 @@ public class ExampleParameterizedQueries {
                 + "ORDER BY trip_distance LIMIT 5";
 
         // Mix automatic inference (5.0) with explicit type (Param.string())
-        try (ArrowReader reader = client.queryWithParams(sql,
+        try (ArrowReader reader = client.sqlWithParams(sql,
                 5.0, // Inferred as Float64
                 Param.string("N") // Explicit String type
         )) {

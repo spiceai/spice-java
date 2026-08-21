@@ -128,7 +128,7 @@ public class PerfBenchmarkTest extends TestCase {
 
     private static Callable<Long> paramsOp(SpiceClient client, long expectedRows) {
         return () -> {
-            try (ArrowReader reader = client.queryWithParams(SQL, 5L)) {
+            try (ArrowReader reader = client.sqlWithParams(SQL, 5L)) {
                 return checkedCountRows(reader, expectedRows);
             }
         };
@@ -138,7 +138,7 @@ public class PerfBenchmarkTest extends TestCase {
         try (SpiceClient client = SpiceClient.builder().withFlightAddress(server.flightUri()).build()) {
             final long expectedRows = server.expectedTotalRows();
             Callable<?> op = () -> {
-                try (FlightStream stream = client.query("SELECT * FROM bench")) {
+                try (FlightStream stream = client.sql("SELECT * FROM bench")) {
                     return checkedCountRows(stream, expectedRows);
                 }
             };
@@ -146,8 +146,8 @@ public class PerfBenchmarkTest extends TestCase {
             long getFlightInfoBefore = server.getFlightInfoCalls.get();
             long doGetBefore = server.doGetCalls.get();
             long[] samples = measure(MEASURED_ITERATIONS, op);
-            System.out.println("[bench] " + stats("query()", samples));
-            recordBench("query() p50", "us", p50Micros(samples));
+            System.out.println("[bench] " + stats("sql()", samples));
+            recordBench("sql() p50", "us", p50Micros(samples));
 
             // The plain query path is exactly 2 RPCs: GetFlightInfo + DoGet.
             assertEquals(MEASURED_ITERATIONS, server.getFlightInfoCalls.get() - getFlightInfoBefore);

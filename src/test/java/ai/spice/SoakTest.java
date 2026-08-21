@@ -86,7 +86,7 @@ public class SoakTest extends TestCase {
         try (SpiceClient client = SpiceClient.builder().withMaxRetries(3).build()) {
             // Fail fast (before the long run) if the runtime isn't serving.
             assertTrue("runtime must be ready before soaking", client.isReady());
-            try (FlightStream warm = client.query(querySql)) {
+            try (FlightStream warm = client.sql(querySql)) {
                 LocalFlightServerTest.countRows(warm);
             }
             // Baseline AFTER warm-up: gRPC/Netty event loops and the JDK HTTP
@@ -105,12 +105,12 @@ public class SoakTest extends TestCase {
                         try {
                             int kind = roll++ % 20;
                             if (kind < 16) {
-                                try (FlightStream stream = client.query(querySql)) {
+                                try (FlightStream stream = client.sql(querySql)) {
                                     rowsRead.addAndGet(LocalFlightServerTest.countRows(stream));
                                 }
                                 dataOperations.incrementAndGet();
                             } else if (kind < 19) {
-                                try (ArrowReader reader = client.queryWithParams(paramSql, 1L)) {
+                                try (ArrowReader reader = client.sqlWithParams(paramSql, 1L)) {
                                     rowsRead.addAndGet(LocalFlightServerTest.countRows(reader));
                                 }
                                 dataOperations.incrementAndGet();
