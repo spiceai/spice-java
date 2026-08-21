@@ -454,6 +454,31 @@ System.out.println(response.getData());      // the rows it returned, decoded fr
 String sql = client.nsqlGenerateSql(new NsqlRequest("how many taxi trips were there yesterday?"));
 ```
 
+#### Active queries
+
+Use `listActiveQueries()` to see the synchronous queries currently running on the runtime,
+and `cancelActiveQuery(queryId)` to cancel one. The runtime does not hand a query's ID back
+to the client that submitted it, so listing is the only way to find the ID that cancelling
+needs.
+
+```java
+List<ActiveQuery> queries = client.listActiveQueries();
+for (ActiveQuery query : queries) {
+    System.out.printf("%s %s %s%n",
+        query.getQueryId(), query.getProtocol(), query.getSqlPreview());
+}
+
+if (!queries.isEmpty()) {
+    client.cancelActiveQuery(queries.get(0).getQueryId());
+}
+```
+
+Both calls are scoped to the authenticated API key or client certificate — not to this
+`SpiceClient` instance — and reach only the one runtime process behind this client's HTTP
+endpoint, which matters if that endpoint is a load balancer in front of several runtimes.
+Runtime releases up to and including v2.1.5 do not scope either endpoint at all — every
+caller sees and can cancel every query regardless of credential.
+
 ### Logging
 
 The SDK uses SLF4J for logging, allowing you to plug in your preferred logging implementation (Logback, Log4j2, java.util.logging, etc.).

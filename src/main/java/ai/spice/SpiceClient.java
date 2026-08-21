@@ -1666,6 +1666,249 @@ public class SpiceClient implements AutoCloseable {
         }
     }
 
+    /**
+     * Lists the synchronous queries currently running on the runtime by calling
+     * {@code GET /v1/sql/active}.
+     *
+     * <p>
+     * Synchronous queries are the ones started by {@link #query(String)},
+     * {@link #queryWithParams(String, Object...)}, or issued directly over Flight
+     * SQL, HTTP, NSQL, or Search. The runtime does not return a query's ID to the
+     * client that submitted it, so this is the only way to discover the ID that
+     * {@link #cancelActiveQuery(String)} needs.
+     *
+     * <p>
+     * Results are scoped to the authenticated principal — an API key or client
+     * certificate — not to this {@code SpiceClient}: every client presenting the
+     * same credential lists the same queries. Results also cover only the one
+     * runtime instance this client's HTTP endpoint reaches, which behind a load
+     * balancer may not be the instance that received a particular query.
+     *
+     * <p>
+     * Runtime releases up to and including v2.1.5 do not scope this endpoint at
+     * all: on those versions, every caller sees every query regardless of
+     * credential.
+     *
+     * @return the currently running synchronous queries
+     * @throws ExecutionException if the runtime is unreachable or returns an
+     *                            unexpected response
+     */
+    public List<ActiveQuery> listActiveQueries() throws ExecutionException {
+        logger.debug("Listing active queries");
+        try {
+            // Resolve rather than concatenate: a base address with a trailing slash
+            // would otherwise produce "http://host:8090//v1/sql/active".
+            URI uri = this.httpAddress.resolve("/v1/sql/active");
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(uri)
+                    // Bound the same way cancelActiveQuery and refreshDataset are, so a
+                    // runtime that accepts the connection but never responds cannot hang
+                    // this call forever.
+                    .timeout(HTTP_REQUEST_TIMEOUT)
+                    .header("X-Spice-User-Agent", Config.getUserAgent())
+                    .GET();
+            if (!Strings.isNullOrEmpty(this.apiKey)) {
+                builder = builder.header("X-API-Key", this.apiKey);
+            }
+            HttpRequest request = builder.build();
+
+            HttpResponse<String> response = httpClient().send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 403) {
+                throw new ExecutionException(
+                        "Failed to list active queries: the configured credentials do not allow listing queries, "
+                                + "use credentials with write access",
+                        null);
+            }
+            if (response.statusCode() != 200) {
+                logger.error("Listing active queries failed - statusCode={}, response={}", response.statusCode(),
+                        response.body());
+                throw new ExecutionException(
+                        String.format("Failed to list active queries. Status Code: %d, Response: %s",
+                                response.statusCode(),
+                                response.body()),
+                        null);
+            }
+
+            return parseActiveQueries(response.body());
+        } catch (ExecutionException e) {
+            // no need to wrap ExecutionException
+            throw e;
+        } catch (ConnectException err) {
+            logger.error("Cannot connect to Spice runtime at {}: {}", this.httpAddress, err.getMessage());
+            throw new ExecutionException(
+                    String.format("The Spice runtime is unavailable at %s. Is it running?", this.httpAddress), err);
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            throw new ExecutionException("Interrupted while listing active queries", err);
+        } catch (Exception err) {
+            logger.error("Listing active queries failed: {}", err.getMessage());
+            throw new ExecutionException("Failed to list active queries due to error: " + err.toString(), err);
+        }
+    }
+
+    /**
+     * Parses the {@code /v1/sql/active} response body.
+     *
+     * @param body the JSON object the runtime returned
+     * @return the parsed active queries, or an empty list when the body carries none
+     * @throws ExecutionException if the body is not the expected shape
+     */
+    private static List<ActiveQuery> parseActiveQueries(String body) throws ExecutionException {
+        JsonElement root;
+        try {
+            root = JsonParser.parseString(body == null ? "" : body);
+        } catch (JsonSyntaxException err) {
+            throw new ExecutionException("The runtime returned a malformed active-queries response", err);
+        }
+        if (root == null || !root.isJsonObject()) {
+            throw new ExecutionException("The runtime returned an unexpected active-queries response", null);
+        }
+        // "queries" absent is treated as none, but present-and-wrong-shape is a
+        // malformed response, not silently zero active queries.
+        JsonElement queries = root.getAsJsonObject().get("queries");
+        if (queries == null) {
+            return Collections.emptyList();
+        }
+        if (!queries.isJsonArray()) {
+            throw new ExecutionException("The runtime returned an unexpected active-queries response", null);
+        }
+
+        List<ActiveQuery> result = new ArrayList<>();
+        for (JsonElement element : queries.getAsJsonArray()) {
+            // A non-object entry (e.g. null) violates the endpoint's schema. Reject the
+            // whole response rather than silently omitting it, which would otherwise tell
+            // the caller a query isn't running when the response was simply malformed.
+            if (!element.isJsonObject()) {
+                throw new ExecutionException("The runtime returned an unexpected active-queries response", null);
+            }
+            result.add(GSON.fromJson(element, ActiveQuery.class));
+        }
+        return result;
+    }
+
+    /**
+     * Cancels a running synchronous query by ID, by calling
+     * {@code POST /v1/sql/{queryId}/cancel}.
+     *
+     * <p>
+     * {@code queryId} comes from {@link #listActiveQueries()}. Cancellation is
+     * scoped to the authenticated principal, not to this {@code SpiceClient}: any
+     * client presenting the same credential can cancel the query, while an ID
+     * outside that scope is reported as not found. Like
+     * {@link #listActiveQueries()}, this reaches only the one runtime instance
+     * this client's HTTP endpoint resolves to.
+     *
+     * <p>
+     * Runtime releases up to and including v2.1.5 do not scope this endpoint at
+     * all: on those versions, any known query ID can be cancelled regardless of
+     * credential.
+     *
+     * @param queryId the ID of the query to cancel, from {@link #listActiveQueries()}
+     * @throws ExecutionException if the runtime is unreachable or reports a failure
+     */
+    public void cancelActiveQuery(String queryId) throws ExecutionException {
+        if (Strings.isNullOrEmpty(queryId)) {
+            throw new IllegalArgumentException("queryId is required, use listActiveQueries() to find one");
+        }
+        // queryId is caller input that is spliced directly into the request path.
+        // Requiring it to look exactly like a UUID rules out path-traversal
+        // segments such as "." or ".." before the string is ever used, rather than
+        // relying on escaping to neutralize them.
+        if (!isUuid(queryId)) {
+            throw new IllegalArgumentException(
+                    "query ID \"" + queryId + "\" is not a valid UUID, use the queryId from listActiveQueries()");
+        }
+
+        logger.debug("Cancelling active query: {}", queryId);
+        try {
+            // Resolve rather than concatenate: a base address with a trailing slash
+            // would otherwise produce "http://host:8090//v1/sql/.../cancel".
+            URI uri = this.httpAddress.resolve("/v1/sql/" + queryId + "/cancel");
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(uri)
+                    .timeout(HTTP_REQUEST_TIMEOUT)
+                    .header("Accept", "application/json")
+                    .header("X-Spice-User-Agent", Config.getUserAgent())
+                    .POST(HttpRequest.BodyPublishers.ofString("{}"));
+            if (!Strings.isNullOrEmpty(this.apiKey)) {
+                builder = builder.header("X-API-Key", this.apiKey);
+            }
+
+            HttpResponse<String> response = httpClient().send(builder.build(), HttpResponse.BodyHandlers.ofString());
+
+            switch (response.statusCode()) {
+                case 200:
+                    logger.debug("Active query cancelled successfully: {}", queryId);
+                    return;
+                case 400:
+                    throw new ExecutionException(
+                            "query ID \"" + queryId + "\" is not a valid UUID, use the queryId from "
+                                    + "listActiveQueries()",
+                            null);
+                case 403:
+                    throw new ExecutionException(
+                            "the configured credentials do not allow cancelling queries, "
+                                    + "use credentials with write access",
+                            null);
+                case 404:
+                    throw new ExecutionException(
+                            "no active query \"" + queryId + "\" found: it may have already finished, "
+                                    + "or it was submitted under a different API key",
+                            null);
+                default:
+                    logger.error("Cancelling active query failed - queryId={}, statusCode={}, response={}", queryId,
+                            response.statusCode(), response.body());
+                    throw new ExecutionException(
+                            String.format("Failed to cancel active query. Status Code: %d, Response: %s",
+                                    response.statusCode(),
+                                    response.body()),
+                            null);
+            }
+        } catch (ExecutionException e) {
+            // no need to wrap ExecutionException
+            throw e;
+        } catch (ConnectException err) {
+            logger.error("Cannot connect to Spice runtime at {}: {}", this.httpAddress, err.getMessage());
+            throw new ExecutionException(
+                    String.format("The Spice runtime is unavailable at %s. Is it running?", this.httpAddress), err);
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            throw new ExecutionException("Interrupted while cancelling active query", err);
+        } catch (Exception err) {
+            logger.error("Cancelling active query failed: {}", err.getMessage());
+            throw new ExecutionException("Failed to cancel active query due to error: " + err.toString(), err);
+        }
+    }
+
+    /**
+     * Reports whether {@code value} has the canonical UUID shape: 36 characters,
+     * hexadecimal digits throughout except literal {@code -} at positions 8, 13,
+     * 18, and 23.
+     *
+     * @param value the string to check
+     * @return true if value is shaped like a UUID
+     */
+    private static boolean isUuid(String value) {
+        if (value.length() != 36) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (i == 8 || i == 13 || i == 18 || i == 23) {
+                if (c != '-') {
+                    return false;
+                }
+                continue;
+            }
+            boolean isHex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!isHex) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Without this Accept header, /v1/nsql returns a bare array of rows and
     // drops the generated SQL.
     private static final String NSQL_JSON_MEDIA_TYPE = "application/vnd.spiceai.nsql.v1+json";
@@ -1748,7 +1991,6 @@ public class SpiceClient implements AutoCloseable {
                     .header("Accept", accept)
                     .header("X-Spice-User-Agent", Config.getUserAgent())
                     .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(request)));
-
             if (!Strings.isNullOrEmpty(this.apiKey)) {
                 builder = builder.header("X-API-Key", this.apiKey);
             }
