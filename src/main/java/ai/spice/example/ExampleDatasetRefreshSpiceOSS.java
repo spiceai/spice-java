@@ -49,7 +49,7 @@ public class ExampleDatasetRefreshSpiceOSS {
             System.out.println("Dataset refresh triggered for taxi_trips");
 
             System.out.println("Query taxi_trips dataset");
-            FlightStream stream = client.query("SELECT * FROM taxi_trips LIMIT 1;");
+            FlightStream stream = client.sql("SELECT * FROM taxi_trips LIMIT 1;");
 
             while (stream.next()) {
                 try (VectorSchemaRoot batches = stream.getRoot()) {

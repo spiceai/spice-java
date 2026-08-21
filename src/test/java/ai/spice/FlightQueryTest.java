@@ -52,7 +52,7 @@ public class FlightQueryTest
             int totalRows = 0;
             int columnCount = 0;
 
-            try (FlightStream res = spiceClient.query(sql)) {
+            try (FlightStream res = spiceClient.sql(sql)) {
                 while (res.next()) {
                     VectorSchemaRoot root = res.getRoot();
                     if (totalRows == 0) {
@@ -85,7 +85,7 @@ public class FlightQueryTest
             int totalRows = 0;
             int columnCount = 0;
 
-            try (FlightStream res = spiceClient.query(sql)) {
+            try (FlightStream res = spiceClient.sql(sql)) {
                 while (res.next()) {
                     VectorSchemaRoot root = res.getRoot();
                     if (totalRows == 0) {
@@ -180,7 +180,7 @@ public class FlightQueryTest
     }
 
     private static long countRows(SpiceClient client, String sql) throws Exception {
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             long rows = 0;
             while (stream.next()) {
                 rows += stream.getRoot().getRowCount();

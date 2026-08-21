@@ -59,7 +59,7 @@ public class TpchIntegrationTest extends TestCase {
             synchronized (TpchIntegrationTest.class) {
                 if (tpchAvailableCached == null) {
                     try (SpiceClient probe = SpiceClient.builder().withMaxRetries(1).build();
-                            FlightStream stream = probe.query("SELECT c_custkey FROM tpch.customer LIMIT 1")) {
+                            FlightStream stream = probe.sql("SELECT c_custkey FROM tpch.customer LIMIT 1")) {
                         stream.next();
                         tpchAvailableCached = Boolean.TRUE;
                     } catch (Exception e) {
@@ -88,7 +88,7 @@ public class TpchIntegrationTest extends TestCase {
     public void testShowTables() throws Exception {
         if (!tpchAvailable) return;
 
-        try (FlightStream stream = client.query("SHOW TABLES")) {
+        try (FlightStream stream = client.sql("SHOW TABLES")) {
             Set<String> tableNames = new HashSet<>();
             int columnCount = 0;
             
@@ -121,7 +121,7 @@ public class TpchIntegrationTest extends TestCase {
         if (!tpchAvailable) return;
 
         String sql = "SELECT c_custkey, c_name, c_nationkey FROM tpch.customer LIMIT 10";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             int totalRows = 0;
             boolean hasExpectedColumns = false;
             
@@ -156,7 +156,7 @@ public class TpchIntegrationTest extends TestCase {
         if (!tpchAvailable) return;
 
         String sql = "SELECT c_custkey, c_nationkey FROM tpch.customer WHERE c_nationkey = 1 LIMIT 5";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             int totalRows = 0;
             
             while (stream.next()) {
@@ -181,7 +181,7 @@ public class TpchIntegrationTest extends TestCase {
         if (!tpchAvailable) return;
 
         String sql = "SELECT o_orderkey, o_custkey, o_totalprice FROM tpch.orders LIMIT 10";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             int totalRows = 0;
             
             while (stream.next()) {
@@ -208,7 +208,7 @@ public class TpchIntegrationTest extends TestCase {
 
         // Use a lower threshold that works with any scale factor
         String sql = "SELECT o_orderkey, o_totalprice FROM tpch.orders WHERE o_totalprice > 1000 LIMIT 5";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             int totalRows = 0;
             
             while (stream.next()) {
@@ -233,7 +233,7 @@ public class TpchIntegrationTest extends TestCase {
         if (!tpchAvailable) return;
 
         String sql = "SELECT COUNT(*) as cnt FROM tpch.customer";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             long count = 0;
             
             while (stream.next()) {
@@ -252,7 +252,7 @@ public class TpchIntegrationTest extends TestCase {
 
         // Use direct SUM without LIMIT (LIMIT doesn't work on aggregation)
         String sql = "SELECT SUM(o_totalprice) as total FROM tpch.orders";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             Double sum = null;
             
             while (stream.next()) {
@@ -274,7 +274,7 @@ public class TpchIntegrationTest extends TestCase {
         if (!tpchAvailable) return;
 
         String sql = "SELECT o_orderstatus, COUNT(*) as cnt FROM tpch.orders GROUP BY o_orderstatus";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             int statusCount = 0;
             
             while (stream.next()) {
@@ -300,7 +300,7 @@ public class TpchIntegrationTest extends TestCase {
                 "FROM tpch.customer c " +
                 "JOIN tpch.orders o ON c.c_custkey = o.o_custkey " +
                 "LIMIT 5";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             int totalRows = 0;
             
             while (stream.next()) {
@@ -321,7 +321,7 @@ public class TpchIntegrationTest extends TestCase {
         if (!tpchAvailable) return;
 
         String sql = "DESCRIBE tpch.customer";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             int columnCount = 0;
             Set<String> columnNames = new HashSet<>();
             
@@ -353,7 +353,7 @@ public class TpchIntegrationTest extends TestCase {
         if (!tpchAvailable) return;
 
         String sql = "SELECT c_custkey FROM tpch.customer ORDER BY c_custkey ASC LIMIT 5";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             long previousKey = -1;
             
             while (stream.next()) {
@@ -373,7 +373,7 @@ public class TpchIntegrationTest extends TestCase {
         if (!tpchAvailable) return;
 
         String sql = "SELECT c_custkey FROM tpch.customer ORDER BY c_custkey DESC LIMIT 5";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             long previousKey = Long.MAX_VALUE;
             
             while (stream.next()) {
@@ -396,7 +396,7 @@ public class TpchIntegrationTest extends TestCase {
 
         // Query that might return nulls
         String sql = "SELECT c_custkey, c_phone FROM tpch.customer LIMIT 10";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             int totalRows = 0;
             
             while (stream.next()) {
@@ -426,7 +426,7 @@ public class TpchIntegrationTest extends TestCase {
         if (!tpchAvailable) return;
 
         String sql = "SELECT c_custkey, c_name FROM tpch.customer LIMIT 1000";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             int totalRows = 0;
             
             while (stream.next()) {
@@ -445,7 +445,7 @@ public class TpchIntegrationTest extends TestCase {
 
         // Query that should return no results
         String sql = "SELECT c_custkey FROM tpch.customer WHERE c_custkey < 0";
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             int totalRows = 0;
             
             while (stream.next()) {
@@ -463,7 +463,7 @@ public class TpchIntegrationTest extends TestCase {
         if (!tpchAvailable) return;
 
         try {
-            try (FlightStream stream = client.query("SELECT * FROM nonexistent_table")) {
+            try (FlightStream stream = client.sql("SELECT * FROM nonexistent_table")) {
                 while (stream.next()) {
                     // Should not get here
                 }
@@ -482,7 +482,7 @@ public class TpchIntegrationTest extends TestCase {
         if (!tpchAvailable) return;
 
         try {
-            try (FlightStream stream = client.query("SELECT nonexistent_column FROM tpch.customer")) {
+            try (FlightStream stream = client.sql("SELECT nonexistent_column FROM tpch.customer")) {
                 while (stream.next()) {
                     // Should not get here
                 }
@@ -501,7 +501,7 @@ public class TpchIntegrationTest extends TestCase {
         if (!tpchAvailable) return;
 
         try {
-            try (FlightStream stream = client.query("SELEC * FROM tpch.customer")) {
+            try (FlightStream stream = client.sql("SELEC * FROM tpch.customer")) {
                 while (stream.next()) {
                     // Should not get here
                 }

@@ -72,7 +72,7 @@ public class FlightInfoReaderTest extends TestCase {
             server.endpointCount = 2;
             server.batchesPerEndpoint = 2;
             try (SpiceClient client = SpiceClient.builder().withFlightAddress(server.flightUri()).build();
-                    org.apache.arrow.vector.ipc.ArrowReader reader = client.queryWithParams("SELECT 1", 1)) {
+                    org.apache.arrow.vector.ipc.ArrowReader reader = client.sqlWithParams("SELECT 1", 1)) {
                 long previous = 0;
                 int batches = 0;
                 while (reader.loadNextBatch()) {

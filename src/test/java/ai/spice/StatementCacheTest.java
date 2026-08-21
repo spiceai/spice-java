@@ -61,7 +61,7 @@ public class StatementCacheTest extends TestCase {
     }
 
     private static void runQuery(SpiceClient client, String sql, Object... params) throws Exception {
-        try (ArrowReader reader = client.queryWithParams(sql, params)) {
+        try (ArrowReader reader = client.sqlWithParams(sql, params)) {
             long rows = LocalFlightServerTest.countRows(reader);
             assertTrue("query should return rows", rows > 0);
         }
@@ -171,7 +171,7 @@ public class StatementCacheTest extends TestCase {
                     try {
                         start.await();
                         for (int i = 0; i < queriesPerThread; i++) {
-                            try (ArrowReader reader = client.queryWithParams(SQL, (long) i)) {
+                            try (ArrowReader reader = client.sqlWithParams(SQL, (long) i)) {
                                 totalRows.addAndGet(LocalFlightServerTest.countRows(reader));
                             }
                         }

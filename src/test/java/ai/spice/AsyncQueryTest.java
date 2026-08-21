@@ -40,8 +40,8 @@ import org.apache.arrow.vector.ipc.ArrowStreamWriter;
 import junit.framework.TestCase;
 
 /**
- * Tests for {@link SpiceClient#queryAsync(String)},
- * {@link SpiceClient#queryAsyncWithParams(String, Object...)}, and
+ * Tests for {@link SpiceClient#query(String)},
+ * {@link SpiceClient#queryWithParams(String, Object...)}, and
  * {@link AsyncQuery} against the in-process {@link TestFlightSqlServer}.
  */
 public class AsyncQueryTest extends TestCase {
@@ -86,7 +86,7 @@ public class AsyncQueryTest extends TestCase {
     }
 
     public void testQueryAsyncSubmitsAndReturnsHandle() throws Exception {
-        AsyncQuery query = client.queryAsync("SELECT * FROM test");
+        AsyncQuery query = client.query("SELECT * FROM test");
         assertNotNull(query.getQueryId());
         assertFalse("a fresh query id should not be blank", query.getQueryId().isEmpty());
         assertEquals(QueryStatus.SUCCEEDED, query.status());
@@ -97,7 +97,7 @@ public class AsyncQueryTest extends TestCase {
     }
 
     public void testQueryAsyncWithParamsSubmitsSqlAndParametersInOrder() throws Exception {
-        AsyncQuery query = client.queryAsyncWithParams(
+        AsyncQuery query = client.queryWithParams(
                 "SELECT * FROM test WHERE id = $1 AND name = $2 AND note = $3", 1, "alice", null);
         assertNotNull(query.getQueryId());
 
@@ -112,7 +112,7 @@ public class AsyncQueryTest extends TestCase {
     }
 
     public void testStatusReflectsChangeBetweenPolls() throws Exception {
-        AsyncQuery query = client.queryAsync("SELECT * FROM test");
+        AsyncQuery query = client.query("SELECT * FROM test");
         server.setAsyncQueryStatusSequence(query.getQueryId(),
                 Arrays.asList(QueryStatus.PENDING, QueryStatus.RUNNING, QueryStatus.SUCCEEDED));
 
@@ -126,7 +126,7 @@ public class AsyncQueryTest extends TestCase {
     }
 
     public void testWaitForCompletionBlocksThroughPendingRunningSucceeded() throws Exception {
-        AsyncQuery query = client.queryAsyncWithParams("SELECT * FROM test WHERE id = $1", 1);
+        AsyncQuery query = client.queryWithParams("SELECT * FROM test WHERE id = $1", 1);
         server.setAsyncQueryStatusSequence(query.getQueryId(),
                 Arrays.asList(QueryStatus.PENDING, QueryStatus.RUNNING, QueryStatus.RUNNING, QueryStatus.SUCCEEDED));
 
@@ -136,7 +136,7 @@ public class AsyncQueryTest extends TestCase {
     }
 
     public void testWaitForCompletionTimesOut() throws Exception {
-        AsyncQuery query = client.queryAsync("SELECT * FROM test");
+        AsyncQuery query = client.query("SELECT * FROM test");
         // RUNNING repeated forever (the sequence holds its last entry) never reaches a terminal status.
         server.setAsyncQueryStatusSequence(query.getQueryId(),
                 Arrays.asList(QueryStatus.PENDING, QueryStatus.RUNNING));
@@ -157,7 +157,7 @@ public class AsyncQueryTest extends TestCase {
     }
 
     public void testResultsMultiChunkReconstructsData() throws Exception {
-        AsyncQuery query = client.queryAsync("SELECT * FROM test");
+        AsyncQuery query = client.query("SELECT * FROM test");
         byte[] chunk0 = serializeChunk(0, "a", "b");
         byte[] chunk1 = serializeChunk(2, "c");
         server.setAsyncQueryChunks(query.getQueryId(), Arrays.asList(chunk0, chunk1), 3);
@@ -180,7 +180,7 @@ public class AsyncQueryTest extends TestCase {
     }
 
     public void testResultsEmptyResultReturnsEmptySchema() throws Exception {
-        AsyncQuery query = client.queryAsync("SELECT * FROM test WHERE 1 = 0");
+        AsyncQuery query = client.query("SELECT * FROM test WHERE 1 = 0");
         server.setAsyncQueryChunks(query.getQueryId(), Collections.emptyList(), 0);
 
         try (ArrowReader reader = query.results()) {
@@ -190,7 +190,7 @@ public class AsyncQueryTest extends TestCase {
     }
 
     public void testResultsPropagatesChunkZeroFetchFailureForDeclaredNonEmptyResult() throws Exception {
-        AsyncQuery query = client.queryAsync("SELECT * FROM test");
+        AsyncQuery query = client.query("SELECT * FROM test");
         byte[] chunk0 = serializeChunk(0, "a");
         server.setAsyncQueryChunks(query.getQueryId(), Collections.singletonList(chunk0), 1);
         // A genuine one-chunk result whose chunk-0 fetch fails at the RPC level
@@ -208,7 +208,7 @@ public class AsyncQueryTest extends TestCase {
     }
 
     public void testResultsFailedThrowsWithErrorMessage() throws Exception {
-        AsyncQuery query = client.queryAsync("SELECT * FROM test");
+        AsyncQuery query = client.query("SELECT * FROM test");
         server.setAsyncQueryStatusSequence(query.getQueryId(),
                 Arrays.asList(QueryStatus.RUNNING, QueryStatus.FAILED));
         server.setAsyncQueryError(query.getQueryId(), "TABLE_NOT_FOUND", "table 'test' does not exist");
@@ -223,7 +223,7 @@ public class AsyncQueryTest extends TestCase {
     }
 
     public void testCancelUpdatesStatus() throws Exception {
-        AsyncQuery query = client.queryAsync("SELECT * FROM test");
+        AsyncQuery query = client.query("SELECT * FROM test");
         server.setAsyncQueryStatusSequence(query.getQueryId(),
                 Arrays.asList(QueryStatus.PENDING, QueryStatus.RUNNING));
 
@@ -234,13 +234,13 @@ public class AsyncQueryTest extends TestCase {
 
     public void testQueryAsyncRejectsEmptySql() throws Exception {
         try {
-            client.queryAsync("");
+            client.query("");
             fail("expected IllegalArgumentException");
         } catch (IllegalArgumentException expected) {
             // expected
         }
         try {
-            client.queryAsync(null);
+            client.query(null);
             fail("expected IllegalArgumentException");
         } catch (IllegalArgumentException expected) {
             // expected
@@ -250,7 +250,7 @@ public class AsyncQueryTest extends TestCase {
 
     public void testQueryAsyncWithParamsRejectsEmptySql() throws Exception {
         try {
-            client.queryAsyncWithParams("", 1);
+            client.queryWithParams("", 1);
             fail("expected IllegalArgumentException");
         } catch (IllegalArgumentException expected) {
             // expected

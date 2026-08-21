@@ -50,7 +50,7 @@ public class ExampleIteratingResults {
     public static void main(String[] args) {
         try (SpiceClient client = SpiceClient.builder().build()) {
 
-            FlightStream stream = client.query("SELECT * FROM taxi_trips LIMIT 5;");
+            FlightStream stream = client.sql("SELECT * FROM taxi_trips LIMIT 5;");
 
             // Process each batch of results
             while (stream.next()) {

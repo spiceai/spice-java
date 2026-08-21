@@ -57,7 +57,7 @@ public class ResetTest extends TestCase {
                         // Probe with taxi_trips (not SELECT 1) to ensure
                         // the dataset is loaded and ready, not just that
                         // the server is up.
-                        try (FlightStream stream = probe.query(
+                        try (FlightStream stream = probe.sql(
                                 "SELECT total_amount FROM taxi_trips LIMIT 1")) {
                             stream.next();
                         }
@@ -126,7 +126,7 @@ public class ResetTest extends TestCase {
         client.reset();
 
         try {
-            try (FlightStream stream = client.query("SELECT 1")) {
+            try (FlightStream stream = client.sql("SELECT 1")) {
                 // If a local Spice runtime is running, this succeeds
                 stream.next();
             }
@@ -154,7 +154,7 @@ public class ResetTest extends TestCase {
         client.reset();
 
         try {
-            try (ArrowReader reader = client.queryWithParams("SELECT $1", 42)) {
+            try (ArrowReader reader = client.sqlWithParams("SELECT $1", 42)) {
                 while (reader.loadNextBatch()) {
                     // consume
                 }
@@ -190,7 +190,7 @@ public class ResetTest extends TestCase {
         for (int i = 0; i < 3; i++) {
             client.reset();
             try {
-                FlightStream stream = client.query("SELECT 1");
+                FlightStream stream = client.sql("SELECT 1");
                 stream.close();
             } catch (Exception e) {
                 // Connection errors are fine — we're testing the reset/rebuild cycle,
@@ -266,8 +266,8 @@ public class ResetTest extends TestCase {
     }
 
     /**
-     * Concurrent reset() and query() should not throw unexpected errors.
-     * (query may fail with connection errors, but not NPE or IllegalStateException.)
+     * Concurrent reset() and sql() should not throw unexpected errors.
+     * (sql may fail with connection errors, but not NPE or IllegalStateException.)
      */
     public void testConcurrentResetAndQuery() throws Exception {
         final SpiceClient client = SpiceClient.builder().withMaxRetries(0).build();
@@ -295,7 +295,7 @@ public class ResetTest extends TestCase {
                     startLatch.await();
                     for (int i = 0; i < iterations; i++) {
                         try {
-                            FlightStream stream = client.query("SELECT 1");
+                            FlightStream stream = client.sql("SELECT 1");
                             stream.close();
                         } catch (Exception e) {
                             // Unwrap ExecutionException to inspect the real cause
@@ -440,7 +440,7 @@ public class ResetTest extends TestCase {
         client.reset();
 
         try {
-            FlightStream stream = client.query("SELECT 1");
+            FlightStream stream = client.sql("SELECT 1");
             stream.close();
         } catch (Exception e) {
             assertFalse("NPE after reset with custom config",
@@ -454,7 +454,7 @@ public class ResetTest extends TestCase {
 
     /**
      * If a local Spice runtime is running, verify that
-     * reset() followed by query() actually returns data.
+     * reset() followed by sql() actually returns data.
      * Uses taxi_trips which is available in the CI quickstart dataset.
      */
     public void testResetThenQueryIntegration() throws Exception {
@@ -462,7 +462,7 @@ public class ResetTest extends TestCase {
 
         try (SpiceClient client = SpiceClient.builder().build()) {
             // First query (establishes connection)
-            try (FlightStream stream1 = client.query(
+            try (FlightStream stream1 = client.sql(
                     "SELECT total_amount FROM taxi_trips LIMIT 1")) {
                 int rows1 = 0;
                 while (stream1.next()) {
@@ -475,7 +475,7 @@ public class ResetTest extends TestCase {
             client.reset();
 
             // Second query (lazy rebuild)
-            try (FlightStream stream2 = client.query(
+            try (FlightStream stream2 = client.sql(
                     "SELECT total_amount FROM taxi_trips LIMIT 2")) {
                 int rows2 = 0;
                 while (stream2.next()) {
@@ -488,7 +488,7 @@ public class ResetTest extends TestCase {
 
     /**
      * If a local Spice runtime is running, verify that
-     * reset() followed by queryWithParams() actually returns data.
+     * reset() followed by sqlWithParams() actually returns data.
      * Uses taxi_trips which is available in the CI quickstart dataset.
      */
     public void testResetThenQueryWithParamsIntegration() throws Exception {
@@ -496,7 +496,7 @@ public class ResetTest extends TestCase {
 
         try (SpiceClient client = SpiceClient.builder().build()) {
             // First query
-            try (ArrowReader reader1 = client.queryWithParams(
+            try (ArrowReader reader1 = client.sqlWithParams(
                     "SELECT total_amount FROM taxi_trips WHERE total_amount > $1 LIMIT 1",
                     0.0)) {
                 int rows1 = 0;
@@ -510,7 +510,7 @@ public class ResetTest extends TestCase {
             client.reset();
 
             // Second query (rebuilds channels and re-prepares the statement)
-            try (ArrowReader reader2 = client.queryWithParams(
+            try (ArrowReader reader2 = client.sqlWithParams(
                     "SELECT total_amount FROM taxi_trips WHERE total_amount > $1 LIMIT 2",
                     0.0)) {
                 int rows2 = 0;
