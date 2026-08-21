@@ -1856,15 +1856,30 @@ public class SpiceClient implements AutoCloseable {
                     FlightChannel[] rebuilt = currentChannels();
                     return doFlightActionOnce(actionType, requestBody, rebuilt, useStreamOptions, perCallTimeout);
                 } catch (RuntimeException retryError) {
-                    throw new ExecutionException(
-                            "Failed to perform " + actionType + " due to error: " + retryError.toString(),
-                            retryError);
+                    throw wrapFlightFailure(actionType, retryError, perCallTimeout);
                 }
             }
-            throw new ExecutionException("Failed to perform " + actionType + " due to error: " + e.toString(), e);
+            throw wrapFlightFailure(actionType, e, perCallTimeout);
         } catch (RuntimeException e) {
-            throw new ExecutionException("Failed to perform " + actionType + " due to error: " + e.toString(), e);
+            throw wrapFlightFailure(actionType, e, perCallTimeout);
         }
+    }
+
+    /**
+     * Wraps a failed Flight action into an {@link ExecutionException}, reporting
+     * it as a timeout (rather than a generic transport failure) when
+     * {@code perCallTimeout} was set and the RPC itself was the thing that
+     * exceeded it — otherwise a caller bounding a poll to its remaining wait
+     * budget (see {@link AsyncQuery#waitForCompletion(java.time.Duration)}) sees
+     * a misleading "Failed to perform" error instead of a timeout.
+     */
+    private ExecutionException wrapFlightFailure(String actionType, RuntimeException e,
+            java.time.Duration perCallTimeout) {
+        if (perCallTimeout != null && e instanceof FlightRuntimeException
+                && ((FlightRuntimeException) e).status().code() == FlightStatusCode.TIMED_OUT) {
+            return new ExecutionException("Timed out waiting for a response to " + actionType, e);
+        }
+        return new ExecutionException("Failed to perform " + actionType + " due to error: " + e.toString(), e);
     }
 
     private byte[] doFlightActionOnce(String actionType, byte[] requestBody, FlightChannel[] snapshot,
@@ -1876,8 +1891,13 @@ public class SpiceClient implements AutoCloseable {
             // Appended last so it overrides any queryTimeout already baked into
             // callOptions: the caller's remaining wait budget is a tighter,
             // more specific bound than the general planning-timeout default.
+            // Rounded up rather than truncated, and floored at 1ms: Duration#toMillis()
+            // truncates toward zero, so a sub-millisecond positive remainder would
+            // otherwise become a 0ms timeout, which gRPC treats as "expire immediately"
+            // rather than "no deadline", turning a live poll into a spurious failure.
+            long timeoutMillis = Math.max(1, (perCallTimeout.toNanos() + 999_999) / 1_000_000);
             options = java.util.Arrays.copyOf(baseOptions, baseOptions.length + 1);
-            options[baseOptions.length] = CallOptions.timeout(Math.max(perCallTimeout.toMillis(), 0),
+            options[baseOptions.length] = CallOptions.timeout(timeoutMillis,
                     java.util.concurrent.TimeUnit.MILLISECONDS);
         }
         Iterator<Result> results = channel.rawClient.doAction(new Action(actionType, requestBody), options);
