@@ -468,7 +468,9 @@ for (ActiveQuery query : queries) {
         query.getQueryId(), query.getProtocol(), query.getSqlPreview());
 }
 
-client.cancelActiveQuery(queries.get(0).getQueryId());
+if (!queries.isEmpty()) {
+    client.cancelActiveQuery(queries.get(0).getQueryId());
+}
 ```
 
 Both calls are scoped to the authenticated API key or client certificate — not to this

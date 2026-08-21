@@ -173,7 +173,7 @@ public class ActiveQueriesTest extends TestCase {
             fail("a 403 should raise");
         } catch (ExecutionException e) {
             assertTrue("message should explain the fix: " + e.getMessage(),
-                    e.getMessage().contains("does not allow listing queries"));
+                    e.getMessage().contains("do not allow listing queries"));
         }
     }
 
@@ -211,6 +211,22 @@ public class ActiveQueriesTest extends TestCase {
         try {
             this.client.listActiveQueries();
             fail("a malformed queries field should raise");
+        } catch (ExecutionException e) {
+            assertTrue("expected a malformed-response message: " + e.getMessage(),
+                    e.getMessage().contains("unexpected active-queries response"));
+        }
+    }
+
+    public void testListActiveQueriesRejectsNonObjectArrayEntry() throws Exception {
+        startServer();
+        // A null entry violates the endpoint's schema: it must not be silently
+        // dropped, which would otherwise under-report active queries.
+        stub("/v1/sql/active", 200, "{\"queries\":[null]}");
+        this.client = clientForServer(null);
+
+        try {
+            this.client.listActiveQueries();
+            fail("a non-object array entry should raise");
         } catch (ExecutionException e) {
             assertTrue("expected a malformed-response message: " + e.getMessage(),
                     e.getMessage().contains("unexpected active-queries response"));
@@ -289,7 +305,7 @@ public class ActiveQueriesTest extends TestCase {
             this.client.cancelActiveQuery(VALID_QUERY_ID);
             fail("a 403 should raise");
         } catch (ExecutionException e) {
-            assertTrue(e.getMessage().contains("does not allow cancelling queries"));
+            assertTrue(e.getMessage().contains("do not allow cancelling queries"));
         }
     }
 

@@ -1716,8 +1716,8 @@ public class SpiceClient implements AutoCloseable {
 
             if (response.statusCode() == 403) {
                 throw new ExecutionException(
-                        "Failed to list active queries: the configured API key does not allow listing queries, "
-                                + "use a key with write access",
+                        "Failed to list active queries: the configured credentials do not allow listing queries, "
+                                + "use credentials with write access",
                         null);
             }
             if (response.statusCode() != 200) {
@@ -1776,9 +1776,13 @@ public class SpiceClient implements AutoCloseable {
 
         List<ActiveQuery> result = new ArrayList<>();
         for (JsonElement element : queries.getAsJsonArray()) {
-            if (element.isJsonObject()) {
-                result.add(GSON.fromJson(element, ActiveQuery.class));
+            // A non-object entry (e.g. null) violates the endpoint's schema. Reject the
+            // whole response rather than silently omitting it, which would otherwise tell
+            // the caller a query isn't running when the response was simply malformed.
+            if (!element.isJsonObject()) {
+                throw new ExecutionException("The runtime returned an unexpected active-queries response", null);
             }
+            result.add(GSON.fromJson(element, ActiveQuery.class));
         }
         return result;
     }
@@ -1844,7 +1848,8 @@ public class SpiceClient implements AutoCloseable {
                             null);
                 case 403:
                     throw new ExecutionException(
-                            "the configured API key does not allow cancelling queries, use a key with write access",
+                            "the configured credentials do not allow cancelling queries, "
+                                    + "use credentials with write access",
                             null);
                 case 404:
                     throw new ExecutionException(
