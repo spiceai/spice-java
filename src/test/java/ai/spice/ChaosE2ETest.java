@@ -99,7 +99,7 @@ public class ChaosE2ETest extends TestCase {
     }
 
     private static long countRows(SpiceClient client, String sql) throws Exception {
-        try (FlightStream stream = client.query(sql)) {
+        try (FlightStream stream = client.sql(sql)) {
             return LocalFlightServerTest.countRows(stream);
         }
     }
@@ -136,7 +136,7 @@ public class ChaosE2ETest extends TestCase {
         try (SpiceClient client = newClient(3)) {
             assertEquals(1, countRows(client, "SELECT 1"));
             // Prime the prepared-statement cache so the restart invalidates a live handle.
-            try (ArrowReader reader = client.queryWithParams("SELECT $1", 42L)) {
+            try (ArrowReader reader = client.sqlWithParams("SELECT $1", 42L)) {
                 assertTrue(reader.loadNextBatch());
             }
 
@@ -155,7 +155,7 @@ public class ChaosE2ETest extends TestCase {
 
             // Same client, no reset(): reconnect + re-prepare must be automatic.
             assertEquals(1, (long) guarded(() -> countRows(client, "SELECT 1")));
-            try (ArrowReader reader = guarded(() -> client.queryWithParams("SELECT $1", 43L))) {
+            try (ArrowReader reader = guarded(() -> client.sqlWithParams("SELECT $1", 43L))) {
                 assertTrue("cached statement must transparently re-prepare after restart",
                         reader.loadNextBatch());
             }
@@ -227,7 +227,7 @@ public class ChaosE2ETest extends TestCase {
 
             try {
                 guarded(() -> {
-                    try (FlightStream stream = client.query(bigSql)) {
+                    try (FlightStream stream = client.sql(bigSql)) {
                         assertTrue("stream should produce at least one batch", stream.next());
                         spiced.kill();
                         return LocalFlightServerTest.countRows(stream);

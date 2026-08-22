@@ -42,7 +42,7 @@ public class ExampleSpiceCloudPlatform {
                 .withSpiceCloud()
                 .build()) {
 
-            FlightStream stream = client.query("SELECT * FROM eth.recent_blocks LIMIT 10;");
+            FlightStream stream = client.sql("SELECT * FROM eth.recent_blocks LIMIT 10;");
 
             while (stream.next()) {
                 try (VectorSchemaRoot batches = stream.getRoot()) {

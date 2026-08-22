@@ -75,7 +75,7 @@ public class LocalFlightServerTest extends TestCase {
     }
 
     public void testPlainQueryReturnsAllRows() throws Exception {
-        try (FlightStream stream = client.query("SELECT * FROM test")) {
+        try (FlightStream stream = client.sql("SELECT * FROM test")) {
             assertNotNull(stream.getSchema().findField("id"));
             assertNotNull(stream.getSchema().findField("name"));
             assertEquals(server.expectedTotalRows(), countRows(stream));
@@ -85,7 +85,7 @@ public class LocalFlightServerTest extends TestCase {
     }
 
     public void testQueryWithParamsReturnsAllRows() throws Exception {
-        try (ArrowReader reader = client.queryWithParams("SELECT * FROM test WHERE id > $1", 5L)) {
+        try (ArrowReader reader = client.sqlWithParams("SELECT * FROM test WHERE id > $1", 5L)) {
             assertNotNull(reader.getVectorSchemaRoot().getSchema().findField("id"));
             assertEquals(server.expectedTotalRows(), countRows(reader));
             assertTrue("bytesRead should be positive", reader.bytesRead() > 0);
@@ -96,7 +96,7 @@ public class LocalFlightServerTest extends TestCase {
     }
 
     public void testQueryWithParamsWithoutParameters() throws Exception {
-        try (ArrowReader reader = client.queryWithParams("SELECT 1")) {
+        try (ArrowReader reader = client.sqlWithParams("SELECT 1")) {
             assertEquals(server.expectedTotalRows(), countRows(reader));
         }
         // No parameters bound: no DoPut should have happened.
@@ -111,26 +111,26 @@ public class LocalFlightServerTest extends TestCase {
         server.endpointCount = 3;
         server.batchesPerEndpoint = 2;
         server.rowsPerBatch = 7;
-        try (ArrowReader reader = client.queryWithParams("SELECT * FROM test", 1)) {
+        try (ArrowReader reader = client.sqlWithParams("SELECT * FROM test", 1)) {
             assertEquals(3 * 2 * 7, countRows(reader));
         }
         assertEquals("one DoGet per endpoint", 3, server.doGetCalls.get());
     }
 
     /**
-     * Documents the known limitation of the FlightStream-returning query()
+     * Documents the known limitation of the FlightStream-returning sql()
      * API: only the first endpoint of a partitioned result is consumed.
      */
     public void testPlainQueryConsumesOnlyFirstEndpoint() throws Exception {
         server.endpointCount = 3;
-        try (FlightStream stream = client.query("SELECT * FROM test")) {
+        try (FlightStream stream = client.sql("SELECT * FROM test")) {
             assertEquals((long) server.batchesPerEndpoint * server.rowsPerBatch, countRows(stream));
         }
         assertEquals(1, server.doGetCalls.get());
     }
 
     public void testParameterValuesArriveAtServer() throws Exception {
-        try (ArrowReader reader = client.queryWithParams(
+        try (ArrowReader reader = client.sqlWithParams(
                 "SELECT * FROM test WHERE a=$1 AND b=$2 AND c=$3 AND d=$4 AND e=$5 AND f=$6 AND g=$7 AND h=$8",
                 42, 42L, "hello", 3.5, true, new byte[] { 1, 2, 3 },
                 LocalDate.of(2026, 7, 30), new BigDecimal("12.34"))) {
@@ -152,7 +152,7 @@ public class LocalFlightServerTest extends TestCase {
     }
 
     public void testExplicitParamTypesArriveAtServer() throws Exception {
-        try (ArrowReader reader = client.queryWithParams(
+        try (ArrowReader reader = client.sqlWithParams(
                 "SELECT * FROM test WHERE a=$1 AND b=$2 AND c=$3",
                 Param.int32(7), Param.string("typed"), Param.float64(2.25))) {
             countRows(reader);
@@ -167,10 +167,10 @@ public class LocalFlightServerTest extends TestCase {
 
     public void testRepeatedQueriesReturnConsistentResults() throws Exception {
         for (int i = 0; i < 5; i++) {
-            try (ArrowReader reader = client.queryWithParams("SELECT * FROM test WHERE id = $1", (long) i)) {
+            try (ArrowReader reader = client.sqlWithParams("SELECT * FROM test WHERE id = $1", (long) i)) {
                 assertEquals(server.expectedTotalRows(), countRows(reader));
             }
-            try (FlightStream stream = client.query("SELECT " + i)) {
+            try (FlightStream stream = client.sql("SELECT " + i)) {
                 assertEquals(server.expectedTotalRows(), countRows(stream));
             }
         }
@@ -178,13 +178,13 @@ public class LocalFlightServerTest extends TestCase {
 
     public void testEmptySqlThrowsIllegalArgument() throws Exception {
         try {
-            client.query("");
+            client.sql("");
             fail("Expected IllegalArgumentException");
         } catch (IllegalArgumentException expected) {
             // expected
         }
         try {
-            client.queryWithParams("", 1);
+            client.sqlWithParams("", 1);
             fail("Expected IllegalArgumentException");
         } catch (IllegalArgumentException expected) {
             // expected
@@ -195,13 +195,13 @@ public class LocalFlightServerTest extends TestCase {
         SpiceClient shortLived = SpiceClient.builder().withFlightAddress(server.flightUri()).build();
         shortLived.close();
         try {
-            shortLived.query("SELECT 1");
+            shortLived.sql("SELECT 1");
             fail("Expected IllegalStateException");
         } catch (IllegalStateException expected) {
             assertTrue(expected.getMessage().contains("closed"));
         }
         try {
-            shortLived.queryWithParams("SELECT $1", 1);
+            shortLived.sqlWithParams("SELECT $1", 1);
             fail("Expected IllegalStateException");
         } catch (IllegalStateException expected) {
             assertTrue(expected.getMessage().contains("closed"));
@@ -211,7 +211,7 @@ public class LocalFlightServerTest extends TestCase {
     public void testUnsupportedParameterTypeFailsWithoutRpc() throws Exception {
         long infoCallsBefore = server.getFlightInfoCalls.get();
         try {
-            client.queryWithParams("SELECT $1", new Object());
+            client.sqlWithParams("SELECT $1", new Object());
             fail("Expected ExecutionException");
         } catch (ExecutionException e) {
             assertTrue("cause should be IllegalArgumentException, got: " + e.getCause(),

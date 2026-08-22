@@ -34,8 +34,8 @@ import com.google.gson.JsonObject;
 
 /**
  * A handle to a query submitted for asynchronous execution via
- * {@link SpiceClient#queryAsync(String)} or
- * {@link SpiceClient#queryAsyncWithParams(String, Object...)}.
+ * {@link SpiceClient#query(String)} or
+ * {@link SpiceClient#queryWithParams(String, Object...)}.
  *
  * <p>
  * Async queries require the Spice runtime to be running in

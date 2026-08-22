@@ -57,7 +57,7 @@ public class ResilienceTest extends TestCase {
             server.failNextGetFlightInfo(1, CallStatus.UNAVAILABLE);
 
             long startNanos = System.nanoTime();
-            try (FlightStream stream = client.query("SELECT 1")) {
+            try (FlightStream stream = client.sql("SELECT 1")) {
                 assertEquals(server.expectedTotalRows(), LocalFlightServerTest.countRows(stream));
             }
             long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
@@ -76,7 +76,7 @@ public class ResilienceTest extends TestCase {
                         .build()) {
             server.failNextGetFlightInfo(10, CallStatus.UNAVAILABLE);
             try {
-                client.query("SELECT 1");
+                client.sql("SELECT 1");
                 fail("Expected ExecutionException");
             } catch (ExecutionException e) {
                 assertTrue(e.getCause() instanceof FlightRuntimeException);
@@ -98,7 +98,7 @@ public class ResilienceTest extends TestCase {
 
             long startNanos = System.nanoTime();
             try {
-                client.query("SELECT invalid");
+                client.sql("SELECT invalid");
                 fail("Expected ExecutionException");
             } catch (ExecutionException e) {
                 assertEquals(FlightStatusCode.INVALID_ARGUMENT,
@@ -126,7 +126,7 @@ public class ResilienceTest extends TestCase {
 
             long startNanos = System.nanoTime();
             try {
-                client.query("SELECT 1");
+                client.sql("SELECT 1");
                 fail("Expected ExecutionException");
             } catch (ExecutionException e) {
                 assertEquals(FlightStatusCode.TIMED_OUT,
@@ -151,13 +151,13 @@ public class ResilienceTest extends TestCase {
                         .build()) {
             assertEquals("constructor performs the initial handshake", 1, server.basicAuthValidations.get());
 
-            try (FlightStream stream = client.query("SELECT 1")) {
+            try (FlightStream stream = client.sql("SELECT 1")) {
                 assertEquals(server.expectedTotalRows(), LocalFlightServerTest.countRows(stream));
             }
 
             server.rejectNextBearerToken();
 
-            try (FlightStream stream = client.query("SELECT 2")) {
+            try (FlightStream stream = client.sql("SELECT 2")) {
                 assertEquals(server.expectedTotalRows(), LocalFlightServerTest.countRows(stream));
             }
             assertEquals("expired token must trigger exactly one re-handshake", 2,
@@ -176,7 +176,7 @@ public class ResilienceTest extends TestCase {
                         .withFlightAddress(server.flightUri())
                         .withApiKey("testapp|secret")
                         .build()) {
-            try (ArrowReader reader = client.queryWithParams("SELECT * FROM t WHERE id=$1", 7L)) {
+            try (ArrowReader reader = client.sqlWithParams("SELECT * FROM t WHERE id=$1", 7L)) {
                 assertEquals(server.expectedTotalRows(), LocalFlightServerTest.countRows(reader));
             }
             assertEquals("no extra handshake beyond the constructor's", 1,
@@ -191,18 +191,18 @@ public class ResilienceTest extends TestCase {
                         .withChannelCount(4)
                         .build()) {
             for (int i = 0; i < 8; i++) {
-                try (FlightStream stream = client.query("SELECT " + i)) {
+                try (FlightStream stream = client.sql("SELECT " + i)) {
                     assertEquals(server.expectedTotalRows(), LocalFlightServerTest.countRows(stream));
                 }
             }
-            try (ArrowReader reader = client.queryWithParams("SELECT * FROM t WHERE id=$1", 1L)) {
+            try (ArrowReader reader = client.sqlWithParams("SELECT * FROM t WHERE id=$1", 1L)) {
                 assertEquals(server.expectedTotalRows(), LocalFlightServerTest.countRows(reader));
             }
             assertEquals(9, server.getFlightInfoCalls.get());
 
             // reset() rebuilds all channels and queries still work.
             client.reset();
-            try (FlightStream stream = client.query("SELECT after_reset")) {
+            try (FlightStream stream = client.sql("SELECT after_reset")) {
                 assertEquals(server.expectedTotalRows(), LocalFlightServerTest.countRows(stream));
             }
         }
@@ -238,7 +238,7 @@ public class ResilienceTest extends TestCase {
                 try {
                     start.await();
                     for (int i = 0; i < queries; i++) {
-                        try (ArrowReader reader = client.queryWithParams(
+                        try (ArrowReader reader = client.sqlWithParams(
                                 "SELECT * FROM t WHERE id=$1", (long) i)) {
                             LocalFlightServerTest.countRows(reader);
                         }

@@ -39,20 +39,20 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
  * 
  * <p>
  * Use the static factory methods to create parameters with explicit types,
- * or pass simple Java values directly to queryWithParams for automatic type
+ * or pass simple Java values directly to sqlWithParams for automatic type
  * inference.
  * </p>
- * 
+ *
  * <p>
  * Example usage:
  * </p>
- * 
+ *
  * <pre>
  * // With type inference
- * client.queryWithParams("SELECT * FROM table WHERE id = $1", 123);
- * 
+ * client.sqlWithParams("SELECT * FROM table WHERE id = $1", 123);
+ *
  * // With explicit type
- * client.queryWithParams("SELECT * FROM table WHERE id = $1", Param.int32(123));
+ * client.sqlWithParams("SELECT * FROM table WHERE id = $1", Param.int32(123));
  * </pre>
  */
 public class Param {

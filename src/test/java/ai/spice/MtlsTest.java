@@ -61,12 +61,12 @@ public class MtlsTest extends TestCase {
     }
 
     private static void assertQueriesWork(SpiceClient client, TestFlightSqlServer server) throws Exception {
-        try (FlightStream stream = client.query("SELECT * FROM test")) {
+        try (FlightStream stream = client.sql("SELECT * FROM test")) {
             assertEquals(server.expectedTotalRows(), LocalFlightServerTest.countRows(stream));
         }
         // Parameterized queries run on the same TLS channel (prepared
         // statements inherit the transport configuration).
-        try (ArrowReader reader = client.queryWithParams("SELECT * FROM test WHERE id > $1", 1L)) {
+        try (ArrowReader reader = client.sqlWithParams("SELECT * FROM test WHERE id > $1", 1L)) {
             assertEquals(server.expectedTotalRows(), LocalFlightServerTest.countRows(reader));
         }
     }
@@ -100,7 +100,7 @@ public class MtlsTest extends TestCase {
                         .withTlsRootCertFile(certs.caCert.toString())
                         .build()) {
             try {
-                client.query("SELECT 1");
+                client.sql("SELECT 1");
                 fail("Expected the TLS handshake to be rejected without a client certificate");
             } catch (ExecutionException e) {
                 assertTlsFailure(e);
@@ -115,7 +115,7 @@ public class MtlsTest extends TestCase {
                         .withTlsRootCertFile(certs.otherCaCert.toString())
                         .build()) {
             try {
-                client.query("SELECT 1");
+                client.sql("SELECT 1");
                 fail("Expected certificate verification to fail against an untrusted CA");
             } catch (ExecutionException e) {
                 assertTlsFailure(e);

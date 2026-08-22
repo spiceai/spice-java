@@ -24,8 +24,8 @@ package ai.spice;
 
 /**
  * The lifecycle status of an async query submitted via
- * {@link SpiceClient#queryAsync(String)} or
- * {@link SpiceClient#queryAsyncWithParams(String, Object...)}.
+ * {@link SpiceClient#query(String)} or
+ * {@link SpiceClient#queryWithParams(String, Object...)}.
  *
  * <p>
  * The runtime serializes these as plain strings such as {@code "SUCCEEDED"}. A

@@ -617,7 +617,7 @@ public class SpiceClient implements AutoCloseable {
      * Resets the underlying gRPC transport by closing the current Flight channels and
      * cached prepared statements, then immediately establishes fresh connections with
      * a new DNS lookup and TLS handshake.
-     * This ensures the next {@link #query(String)} or {@link #queryWithParams(String, Object...)}
+     * This ensures the next {@link #sql(String)} or {@link #sqlWithParams(String, Object...)}
      * call does not incur connection setup overhead.
      *
      * <p>Use this method to recover from unrecoverable transport failures such as:</p>
@@ -630,11 +630,11 @@ public class SpiceClient implements AutoCloseable {
      * <p>Example usage for long-lived clients:</p>
      * <pre>{@code
      * try {
-     *     return client.query(sql);
+     *     return client.sql(sql);
      * } catch (ExecutionException e) {
      *     if (isTransportFailure(e.getCause())) {
      *         client.reset();
-     *         return client.query(sql); // retry with fresh connection
+     *         return client.sql(sql); // retry with fresh connection
      *     }
      *     throw e;
      * }
@@ -807,13 +807,19 @@ public class SpiceClient implements AutoCloseable {
     }
 
     /**
-     * Executes a sql query
+     * Runs sql against the Flight endpoint and streams the results back
+     * synchronously.
+     *
+     * <p>
+     * Use {@link #query(String)} instead to submit sql for asynchronous
+     * execution on the runtime and poll for completion, which requires the
+     * runtime to be running in distributed/scheduler mode.
      *
      * @param sql the SQL query to execute
      * @return a FlightStream with the query results
      * @throws ExecutionException if there is an error executing the query
      */
-    public FlightStream query(String sql) throws ExecutionException {
+    public FlightStream sql(String sql) throws ExecutionException {
         if (Strings.isNullOrEmpty(sql)) {
             throw new IllegalArgumentException("No SQL query provided");
         }
@@ -862,15 +868,20 @@ public class SpiceClient implements AutoCloseable {
      *
      * <pre>
      * // With automatic type inference
-     * ArrowReader reader = client.queryWithParams(
+     * ArrowReader reader = client.sqlWithParams(
      *     "SELECT * FROM table WHERE id = $1 AND name = $2",
      *     123, "test");
      *
      * // With explicit types
-     * ArrowReader reader = client.queryWithParams(
+     * ArrowReader reader = client.sqlWithParams(
      *     "SELECT * FROM table WHERE id = $1 AND amount = $2",
      *     Param.int32(123), Param.float64(99.99));
      * </pre>
+     *
+     * <p>
+     * Use {@link #queryWithParams(String, Object...)} instead to submit the
+     * parameterized query for asynchronous execution on the runtime, which
+     * requires distributed/scheduler mode.
      *
      * @param sql    the SQL query with positional parameter placeholders ($1, $2,
      *               etc.)
@@ -879,7 +890,7 @@ public class SpiceClient implements AutoCloseable {
      *         closing the reader.
      * @throws ExecutionException if there is an error executing the query
      */
-    public ArrowReader queryWithParams(String sql, Object... params) throws ExecutionException {
+    public ArrowReader sqlWithParams(String sql, Object... params) throws ExecutionException {
         if (Strings.isNullOrEmpty(sql)) {
             throw new IllegalArgumentException("No SQL query provided");
         }
@@ -1696,14 +1707,14 @@ public class SpiceClient implements AutoCloseable {
      * cluster mode.
      *
      * <p>
-     * Use {@link #query(String)} for the normal synchronous, streaming query
+     * Use {@link #sql(String)} for the normal synchronous, streaming query
      * path.
      *
      * @param sql the SQL query to submit
      * @return a handle to the submitted query
      * @throws ExecutionException if the query could not be submitted
      */
-    public AsyncQuery queryAsync(String sql) throws ExecutionException {
+    public AsyncQuery query(String sql) throws ExecutionException {
         return submitAsyncQuery(sql, null);
     }
 
@@ -1712,11 +1723,11 @@ public class SpiceClient implements AutoCloseable {
      * bound positionally ($1, $2, ...) and sent to the runtime as a JSON array,
      * so each parameter must be a value Gson can encode meaningfully as JSON
      * (numbers, strings, booleans, lists) — this bypasses the Arrow-typed
-     * parameter binding {@link #queryWithParams(String, Object...)} uses, so
+     * parameter binding {@link #sqlWithParams(String, Object...)} uses, so
      * temporal and decimal types are not given special handling here.
      *
      * <p>
-     * Use {@link #queryWithParams(String, Object...)} for the normal
+     * Use {@link #sqlWithParams(String, Object...)} for the normal
      * synchronous, streaming parameterized query path.
      *
      * @param sql    the SQL query with positional parameter placeholders ($1, $2,
@@ -1725,7 +1736,7 @@ public class SpiceClient implements AutoCloseable {
      * @return a handle to the submitted query
      * @throws ExecutionException if the query could not be submitted
      */
-    public AsyncQuery queryAsyncWithParams(String sql, Object... params) throws ExecutionException {
+    public AsyncQuery queryWithParams(String sql, Object... params) throws ExecutionException {
         return submitAsyncQuery(sql, (params != null && params.length > 0) ? params : null);
     }
 
@@ -1828,8 +1839,8 @@ public class SpiceClient implements AutoCloseable {
      * {@code GET /v1/sql/active}.
      *
      * <p>
-     * Synchronous queries are the ones started by {@link #query(String)},
-     * {@link #queryWithParams(String, Object...)}, or issued directly over Flight
+     * Synchronous queries are the ones started by {@link #sql(String)},
+     * {@link #sqlWithParams(String, Object...)}, or issued directly over Flight
      * SQL, HTTP, NSQL, or Search. The runtime does not return a query's ID to the
      * client that submitted it, so this is the only way to discover the ID that
      * {@link #cancelActiveQuery(String)} needs.
@@ -2200,7 +2211,7 @@ public class SpiceClient implements AutoCloseable {
      *
      * <p>
      * Use it to inspect or edit the query before running it, or to run it
-     * through {@link #query(String)} or {@link #queryWithParams(String, Object...)}
+     * through {@link #sql(String)} or {@link #sqlWithParams(String, Object...)}
      * so the results arrive as Arrow rather than decoded JSON.
      *
      * @param request the natural-language query
@@ -2278,8 +2289,8 @@ public class SpiceClient implements AutoCloseable {
                         .toRuntimeException();
             }
             if (endpoints.size() > 1) {
-                logger.warn("Server returned {} endpoints; query() consumes only the first. "
-                        + "Use queryWithParams() (ArrowReader) to consume all endpoints.", endpoints.size());
+                logger.warn("Server returned {} endpoints; sql() consumes only the first. "
+                        + "Use sqlWithParams() (ArrowReader) to consume all endpoints.", endpoints.size());
             }
             Ticket ticket = endpoints.get(0).getTicket();
             return channel.client.getStream(ticket, channel.streamOptions);
