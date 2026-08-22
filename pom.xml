@@ -265,6 +265,13 @@
                         <!-- Examples ship in the jar but are not a compatibility surface. -->
                         <excludes>
                             <exclude>ai.spice.example</exclude>
+                            <!-- v0.8.0's intentional breaking change: query()/queryWithParams() now
+                                 submit for asynchronous execution and return AsyncQuery, instead of
+                                 streaming results directly. The previous behavior moved to the new
+                                 sql()/sqlWithParams() methods. Remove these two exclusions once
+                                 japicmp.oldVersion is bumped past 0.8.0. -->
+                            <exclude>ai.spice.SpiceClient#query(java.lang.String)</exclude>
+                            <exclude>ai.spice.SpiceClient#queryWithParams(java.lang.String, java.lang.Object[])</exclude>
                         </excludes>
                         <!-- v0.6.0 internals referenced ADBC, which 0.7.0 removed
                              from the classpath; those types were never public API. -->
