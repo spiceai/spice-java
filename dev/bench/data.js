@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788423588248,
+  "lastUpdate": 1788509958566,
   "repoUrl": "https://github.com/spiceai/spice-java",
   "entries": {
     "spice-java in-process benchmarks": [
@@ -1422,6 +1422,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "sql() p50",
             "value": 802,
+            "unit": "us"
+          },
+          {
+            "name": "param-root bytes per 100 binds",
+            "value": 3490,
+            "unit": "bytes"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Viktor Yershov",
+            "username": "krinart",
+            "email": "viktor@spice.ai"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "215eae25492d23f995a793d0aa5d24868bd32280",
+          "message": "feat!: rename query/queryWithParams to sql/sqlWithParams; query becomes async (#58)\n\n* docs: add active query management and async queries to v0.8.0 notes\n\n#53 (listActiveQueries/cancelActiveQuery) has merged to trunk since\nv0.8.0's release notes were first written, and #56 (queryAsync/\nqueryAsyncWithParams) is expected to merge before release. Both are\npurely additive, so the compatibility statement is unchanged.\n\n* Update release notes for v0.8.0\n\nAdded documentation for asynchronous query execution and active query management features.\n\n* docs: address review comments on v0.8.0 release notes\n\n- Move the AsyncQuery-handle paragraph (status/waitForCompletion/cancel)\n  back under Async Queries; it was left stranded under Active Query\n  Management by a later reordering of the two sections.\n- Reword \"Public API unchanged\" to \"Additive, backward-compatible\n  change\" -- new public methods were added, so the API did change,\n  just without breaking anything existing.\n\n* feat!: rename query/queryWithParams to sql/sqlWithParams; queryAsync becomes query\n\nMatches the breaking-rename pattern already shipped in the dotnet, js,\nand python SDKs: query()/queryWithParams() now submit SQL for\nasynchronous execution and return an AsyncQuery handle, and the\nprevious synchronous, streaming behavior moves to new sql()/\nsqlWithParams() methods.\n\n- SpiceClient.query(String) -> SpiceClient.sql(String)\n- SpiceClient.queryWithParams(String, Object...) -> SpiceClient.sqlWithParams(String, Object...)\n- SpiceClient.queryAsync(String) -> SpiceClient.query(String)\n- SpiceClient.queryAsyncWithParams(String, Object...) -> SpiceClient.queryWithParams(String, Object...)\n\nUpdates every call site and cross-reference in src/main, src/test,\nREADME.md, and docs/parameterized_queries.md. Historical release notes\n(v0.5.0.md, v0.6.0.md) are left untouched since they accurately\ndocument what those versions actually shipped at the time.\n\nFull test suite passes unchanged in behavior -- this is a pure rename,\nno logic changes.\n\n* docs: document query/queryWithParams -> sql/sqlWithParams as breaking\n\nReplaces the \"Additive, backward-compatible change\" compatibility\nstatement, which the rename in the previous commit made false, with an\nactual Breaking Changes section describing it: query()/queryWithParams()\nnow submit for asynchronous execution and return an AsyncQuery handle;\nthe previous synchronous, streaming behavior moved to sql()/\nsqlWithParams(). Also fixes two now-stale sync-path cross-references\n(Nsql and Async Queries sections) that still said query()/\nqueryWithParams() where they meant the new sql()/sqlWithParams().\n\n* build: excuse query/queryWithParams from the japicmp compatibility gate\n\nThe gate correctly caught the intentional breaking change: query()'s\nreturn type changed from FlightStream to AsyncQuery, and\nqueryWithParams()'s from ArrowReader to AsyncQuery, since both now\nsubmit for asynchronous execution instead of streaming results\ndirectly. Documented, scoped exclusions for exactly these two methods\nkeep the gate meaningful for catching any other, unintended breaking\nchange in this or a future release.\n\nVerified locally with the exact CI command (mvn checkstyle:check\njapicmp:cmp) -- BUILD SUCCESS, and the generated report confirms\nSpiceClient is otherwise fully binary- and source-compatible with the\npublished 0.7.0.",
+          "timestamp": "2026-08-22T00:29:10Z",
+          "url": "https://github.com/spiceai/spice-java/commit/215eae25492d23f995a793d0aa5d24868bd32280"
+        },
+        "date": 1788509958003,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "queryWithParams cached p50",
+            "value": 2734,
+            "unit": "us"
+          },
+          {
+            "name": "queryWithParams uncached p50",
+            "value": 2820,
+            "unit": "us"
+          },
+          {
+            "name": "sql() p50",
+            "value": 1120,
             "unit": "us"
           },
           {
