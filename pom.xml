@@ -34,7 +34,7 @@
         <!-- Netty 4.1.x line: grpc-netty 1.79.0 is built and tested against Netty 4.1.
              Do NOT bump to the 4.2.x line (netty-all 4.2 previously forced an unsupported
              gRPC/Netty combination onto the classpath). -->
-        <netty.version>4.1.130.Final</netty.version>
+        <netty.version>4.1.135.Final</netty.version>
         <grpc.version>1.79.0</grpc.version>
         <!-- Placeholder for JDK-version-specific JVM flags (e.g. sun.misc.Unsafe access).
              Set via -DextraArgLine="..." on the Maven command line. -->
@@ -90,12 +90,12 @@
         <dependency>
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcprov-jdk18on</artifactId>
-            <version>1.80</version>
+            <version>1.85</version>
         </dependency>
         <dependency>
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcpkix-jdk18on</artifactId>
-            <version>1.80</version>
+            <version>1.84</version>
         </dependency>
         <!-- Native epoll transport for Linux: lets gRPC/Netty use epoll instead of NIO
              for lower-latency, lower-allocation socket I/O on Linux servers. -->
