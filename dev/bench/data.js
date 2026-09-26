@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790324395506,
+  "lastUpdate": 1790410702629,
   "repoUrl": "https://github.com/spiceai/spice-java",
   "entries": {
     "spice-java in-process benchmarks": [
@@ -2346,6 +2346,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "sql() p50",
             "value": 1066,
+            "unit": "us"
+          },
+          {
+            "name": "param-root bytes per 100 binds",
+            "value": 3490,
+            "unit": "bytes"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]",
+            "email": "49699333+dependabot[bot]@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "c4085b5e3f5546a0c65e70edae3ca5be98ebde80",
+          "message": "chore(deps): bump the maven group across 1 directory with 3 updates (#59)\n\nBumps the maven group with 3 updates in the / directory: [org.bouncycastle:bcprov-jdk18on](https://github.com/bcgit/bc-java), [org.bouncycastle:bcpkix-jdk18on](https://github.com/bcgit/bc-java) and [io.netty:netty-transport-native-epoll](https://github.com/netty/netty).\n\n\nUpdates `org.bouncycastle:bcprov-jdk18on` from 1.80 to 1.85\n- [Changelog](https://github.com/bcgit/bc-java/blob/main/docs/releasenotes.md)\n- [Commits](https://github.com/bcgit/bc-java/commits)\n\nUpdates `org.bouncycastle:bcpkix-jdk18on` from 1.80 to 1.84\n- [Changelog](https://github.com/bcgit/bc-java/blob/main/docs/releasenotes.md)\n- [Commits](https://github.com/bcgit/bc-java/commits)\n\nUpdates `io.netty:netty-transport-native-epoll` from 4.1.130.Final to 4.1.135.Final\n- [Release notes](https://github.com/netty/netty/releases)\n- [Commits](https://github.com/netty/netty/compare/netty-4.1.130.Final...netty-4.1.135.Final)\n\n---\nupdated-dependencies:\n- dependency-name: org.bouncycastle:bcprov-jdk18on\n  dependency-version: '1.85'\n  dependency-type: direct:production\n  dependency-group: maven\n- dependency-name: org.bouncycastle:bcpkix-jdk18on\n  dependency-version: '1.84'\n  dependency-type: direct:production\n  dependency-group: maven\n- dependency-name: io.netty:netty-transport-native-epoll\n  dependency-version: 4.1.135.Final\n  dependency-type: direct:production\n  dependency-group: maven\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-24T15:44:04Z",
+          "url": "https://github.com/spiceai/spice-java/commit/c4085b5e3f5546a0c65e70edae3ca5be98ebde80"
+        },
+        "date": 1790410702107,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "queryWithParams cached p50",
+            "value": 2721,
+            "unit": "us"
+          },
+          {
+            "name": "queryWithParams uncached p50",
+            "value": 2909,
+            "unit": "us"
+          },
+          {
+            "name": "sql() p50",
+            "value": 1118,
             "unit": "us"
           },
           {
