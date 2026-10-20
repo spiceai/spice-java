@@ -954,10 +954,15 @@ public class SpiceClient implements AutoCloseable {
                 try {
                     info = bindAndExecute(statement, paramRoot);
                 } catch (FlightRuntimeException e) {
-                    logger.debug("Cached prepared statement failed ({}); preparing a fresh statement",
-                            e.status().code());
                     closeStatementQuietly(statement);
                     statement = null;
+                    if (usesBearerAuth() && e.status().code() == FlightStatusCode.UNAUTHENTICATED) {
+                        // A rejected Bearer API key is final; preparing a fresh statement
+                        // would only resend it.
+                        throw e;
+                    }
+                    logger.debug("Cached prepared statement failed ({}); preparing a fresh statement",
+                            e.status().code());
                 }
             }
             if (info == null) {

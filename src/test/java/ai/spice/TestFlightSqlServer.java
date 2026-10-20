@@ -95,6 +95,9 @@ final class TestFlightSqlServer implements AutoCloseable {
     /** Authorization headers seen by a server started with {@link #withStaticApiKey}. */
     final List<String> authorizationHeaders = java.util.Collections.synchronizedList(new ArrayList<>());
 
+    /** When set, a {@link #withStaticApiKey} server rejects every call, as if the key were revoked. */
+    volatile boolean staticApiKeyRevoked;
+
     // ==================== failure injection ====================
     private final AtomicInteger failNextGetFlightInfo = new AtomicInteger();
     private volatile CallStatus injectedFailureStatus = CallStatus.UNAVAILABLE;
@@ -203,7 +206,7 @@ final class TestFlightSqlServer implements AutoCloseable {
             builder.headerAuthenticator(headers -> {
                 String authorization = headers.get("authorization");
                 authorizationHeaders.add(String.valueOf(authorization));
-                if (!("Bearer " + staticApiKey).equals(authorization)) {
+                if (staticApiKeyRevoked || !("Bearer " + staticApiKey).equals(authorization)) {
                     throw CallStatus.UNAUTHENTICATED.withDescription("Invalid credentials").toRuntimeException();
                 }
                 return () -> "api-key";

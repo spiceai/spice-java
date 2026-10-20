@@ -86,6 +86,36 @@ public class ApiKeyAuthTest extends TestCase {
         }
     }
 
+    /**
+     * A revoked Bearer key fails a parameterized query on a cached prepared
+     * statement without preparing a fresh statement with the rejected key.
+     */
+    public void testRevokedPlainKeyDoesNotRePrepareCachedStatement() throws Exception {
+        try (TestFlightSqlServer server = TestFlightSqlServer.withStaticApiKey("plain-key");
+                SpiceClient client = SpiceClient.builder()
+                        .withFlightAddress(server.flightUri())
+                        .withApiKey("plain-key")
+                        .withMaxRetries(0)
+                        .build()) {
+            String sql = "SELECT * FROM t WHERE id=$1";
+            try (ArrowReader reader = client.sqlWithParams(sql, 7L)) {
+                assertEquals(server.expectedTotalRows(), LocalFlightServerTest.countRows(reader));
+            }
+            assertEquals("statement prepared once", 1, server.createPreparedStatementCalls.get());
+
+            server.staticApiKeyRevoked = true;
+            int callsBefore = server.authorizationHeaders.size();
+            try (ArrowReader reader = client.sqlWithParams(sql, 8L)) {
+                LocalFlightServerTest.countRows(reader);
+                fail("Expected UNAUTHENTICATED");
+            } catch (Exception e) {
+                assertTrue("unexpected failure: " + e, causedByUnauthenticated(e));
+            }
+            int rejectedCalls = server.authorizationHeaders.size() - callsBefore;
+            assertEquals("bind on the cached statement plus its close; no fresh prepare", 2, rejectedCalls);
+        }
+    }
+
     public void testCloudKeyStillUsesBasicHandshake() throws Exception {
         try (TestFlightSqlServer server = new TestFlightSqlServer("testapp", "testapp|secret");
                 SpiceClient client = SpiceClient.builder()
