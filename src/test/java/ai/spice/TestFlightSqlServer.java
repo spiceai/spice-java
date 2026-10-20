@@ -92,6 +92,9 @@ final class TestFlightSqlServer implements AutoCloseable {
     final AtomicInteger doGetCalls = new AtomicInteger();
     final AtomicInteger basicAuthValidations = new AtomicInteger();
 
+    /** Authorization headers seen by a server started with {@link #withStaticApiKey}. */
+    final List<String> authorizationHeaders = java.util.Collections.synchronizedList(new ArrayList<>());
+
     // ==================== failure injection ====================
     private final AtomicInteger failNextGetFlightInfo = new AtomicInteger();
     private volatile CallStatus injectedFailureStatus = CallStatus.UNAVAILABLE;
@@ -139,6 +142,15 @@ final class TestFlightSqlServer implements AutoCloseable {
     }
 
     /**
+     * Starts a server that, like a Spice OSS runtime secured with an API key,
+     * accepts only {@code Authorization: Bearer <apiKey>} on every call and has
+     * no Basic handshake.
+     */
+    static TestFlightSqlServer withStaticApiKey(String apiKey) throws Exception {
+        return new TestFlightSqlServer(null, null, null, false, apiKey);
+    }
+
+    /**
      * Starts a TLS server using the fixture's server certificate. With
      * requireClientCert, clients must present a certificate signed by the
      * fixture CA (mutual TLS).
@@ -149,6 +161,11 @@ final class TestFlightSqlServer implements AutoCloseable {
 
     private TestFlightSqlServer(String expectedUser, String expectedPassword,
             TestCerts certs, boolean requireClientCert) throws Exception {
+        this(expectedUser, expectedPassword, certs, requireClientCert, null);
+    }
+
+    private TestFlightSqlServer(String expectedUser, String expectedPassword,
+            TestCerts certs, boolean requireClientCert, String staticApiKey) throws Exception {
         this.allocator = new RootAllocator(Long.MAX_VALUE);
         // TLS tests bind and dial 127.0.0.1 explicitly: "localhost" can resolve
         // to ::1 first, and a connection-refused there would let negative TLS
@@ -180,6 +197,16 @@ final class TestFlightSqlServer implements AutoCloseable {
                     throw CallStatus.UNAUTHENTICATED.withDescription("token expired").toRuntimeException();
                 }
                 return inner.authenticate(headers);
+            });
+        }
+        if (staticApiKey != null) {
+            builder.headerAuthenticator(headers -> {
+                String authorization = headers.get("authorization");
+                authorizationHeaders.add(String.valueOf(authorization));
+                if (!("Bearer " + staticApiKey).equals(authorization)) {
+                    throw CallStatus.UNAUTHENTICATED.withDescription("Invalid credentials").toRuntimeException();
+                }
+                return () -> "api-key";
             });
         }
         this.server = builder.build();

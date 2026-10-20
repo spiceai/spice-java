@@ -91,25 +91,39 @@ public class SpiceClientBuilder {
     }
 
     /**
-     * Sets the client's Api Key.
+     * Sets the client's API key.
+     * <p>
+     * Accepts a plain key, as configured on a Spice OSS runtime secured with an
+     * API key, or a Spice Cloud key in the form {@code appId|key}. A plain key is
+     * sent as {@code Authorization: Bearer <key>} on every Flight call. A Spice
+     * Cloud key authenticates with the Flight Basic handshake. HTTP calls send
+     * the key as {@code X-API-Key} in both cases.
      *
-     * @param apiKey The Spice Cloud api key
+     * @param apiKey The runtime API key, or a Spice Cloud key in the form
+     *               {@code appId|key}
      * @return The current instance of SpiceClientBuilder for method chaining.
-     * @throws IllegalArgumentException Thrown when the apiKey is in wrong format.
+     * @throws IllegalArgumentException Thrown when the apiKey is null or empty.
      */
     public SpiceClientBuilder withApiKey(String apiKey) {
         if (Strings.isNullOrEmpty(apiKey)) {
             throw new IllegalArgumentException("apiKey can't be null or empty");
         }
 
-        String[] parts = apiKey.split("\\|");
-        if (parts.length != 2) {
-            throw new IllegalArgumentException("apiKey is invalid");
-        }
-
-        this.appId = parts[0];
+        this.appId = cloudAppId(apiKey);
         this.apiKey = apiKey;
         return this;
+    }
+
+    /**
+     * Returns the app ID of a well-formed Spice Cloud key ({@code appId|secret}),
+     * or null for a plain key.
+     */
+    static String cloudAppId(String apiKey) {
+        String[] parts = apiKey.split("\\|", -1);
+        if (parts.length != 2 || parts[0].trim().isEmpty() || parts[1].trim().isEmpty()) {
+            return null;
+        }
+        return parts[0];
     }
 
     /**
