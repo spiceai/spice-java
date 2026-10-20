@@ -480,6 +480,23 @@ public class SpiceClient implements AutoCloseable {
         closeStatementsQuietly(statementCache.swapGeneration(newChannels));
     }
 
+    /**
+     * Whether the API key is sent directly as {@code Authorization: Bearer <key>}
+     * on every Flight call. Used for plain keys (no app ID), as configured on a
+     * Spice OSS runtime secured with an API key.
+     */
+    boolean usesBearerAuth() {
+        return !Strings.isNullOrEmpty(apiKey) && Strings.isNullOrEmpty(appId);
+    }
+
+    /**
+     * Whether the client exchanges its app ID and API key for a session token
+     * through the Flight Basic handshake (Spice Cloud keys).
+     */
+    private boolean usesHandshakeAuth() {
+        return !Strings.isNullOrEmpty(apiKey) && !Strings.isNullOrEmpty(appId);
+    }
+
     private FlightChannel buildFlightChannel() {
         // Build a gRPC channel using forTarget() with the "dns:///" scheme so that
         // gRPC's DnsNameResolver periodically re-resolves the hostname. This is critical
@@ -547,20 +564,30 @@ public class SpiceClient implements AutoCloseable {
                 }
                 headers.put("User-Agent", uaString);
 
-                final ClientIncomingAuthHeaderMiddleware.Factory authFactory =
-                        new ClientIncomingAuthHeaderMiddleware.Factory(new ClientBearerHeaderHandler());
+                if (usesBearerAuth()) {
+                    // Spice OSS runtimes secured with an API key accept only a Bearer
+                    // token. The key is the credential itself, so there is no handshake.
+                    headers.put("authorization", "Bearer " + this.apiKey);
+                    List<FlightClientMiddleware.Factory> middleware = new ArrayList<>();
+                    middleware.add(new HeaderAuthMiddlewareFactory(null, headers));
+                    client = FlightGrpcUtils.createFlightClient(allocator, channel, middleware);
+                    logger.debug("Flight channel built (bearer API key) - target={}", target);
+                } else {
+                    final ClientIncomingAuthHeaderMiddleware.Factory authFactory =
+                            new ClientIncomingAuthHeaderMiddleware.Factory(new ClientBearerHeaderHandler());
 
-                // Combine auth and custom header middleware into a single factory
-                final HeaderAuthMiddlewareFactory combinedFactory = new HeaderAuthMiddlewareFactory(authFactory,
-                        headers);
+                    // Combine auth and custom header middleware into a single factory
+                    final HeaderAuthMiddlewareFactory combinedFactory = new HeaderAuthMiddlewareFactory(authFactory,
+                            headers);
 
-                List<FlightClientMiddleware.Factory> middleware = new ArrayList<>();
-                middleware.add(combinedFactory);
+                    List<FlightClientMiddleware.Factory> middleware = new ArrayList<>();
+                    middleware.add(combinedFactory);
 
-                client = FlightGrpcUtils.createFlightClient(allocator, channel, middleware);
-                client.handshake(new CredentialCallOption(new BasicAuthCredentialWriter(this.appId, this.apiKey)));
-                auth = authFactory.getCredentialCallOption();
-                logger.debug("Flight channel built (authenticated) - target={}, appId={}", target, this.appId);
+                    client = FlightGrpcUtils.createFlightClient(allocator, channel, middleware);
+                    client.handshake(new CredentialCallOption(new BasicAuthCredentialWriter(this.appId, this.apiKey)));
+                    auth = authFactory.getCredentialCallOption();
+                    logger.debug("Flight channel built (authenticated) - target={}, appId={}", target, this.appId);
+                }
             }
 
             List<CallOption> options = new ArrayList<>(2);
@@ -666,7 +693,7 @@ public class SpiceClient implements AutoCloseable {
      * the retryer then re-attempts the query on the fresh connection.
      */
     private void maybeRebuildOnAuthError(FlightRuntimeException e, FlightChannel[] expected) {
-        if (e.status().code() != FlightStatusCode.UNAUTHENTICATED || Strings.isNullOrEmpty(apiKey)) {
+        if (e.status().code() != FlightStatusCode.UNAUTHENTICATED || !usesHandshakeAuth()) {
             return;
         }
         synchronized (this) {
@@ -927,10 +954,15 @@ public class SpiceClient implements AutoCloseable {
                 try {
                     info = bindAndExecute(statement, paramRoot);
                 } catch (FlightRuntimeException e) {
-                    logger.debug("Cached prepared statement failed ({}); preparing a fresh statement",
-                            e.status().code());
                     closeStatementQuietly(statement);
                     statement = null;
+                    if (usesBearerAuth() && e.status().code() == FlightStatusCode.UNAUTHENTICATED) {
+                        // A rejected Bearer API key is final; preparing a fresh statement
+                        // would only resend it.
+                        throw e;
+                    }
+                    logger.debug("Cached prepared statement failed ({}); preparing a fresh statement",
+                            e.status().code());
                 }
             }
             if (info == null) {
@@ -2077,7 +2109,7 @@ public class SpiceClient implements AutoCloseable {
             return doFlightActionOnce(actionType, requestBody, snapshot, useStreamOptions, perCallTimeout);
         } catch (FlightRuntimeException e) {
             maybeRebuildOnAuthError(e, snapshot);
-            if (e.status().code() == FlightStatusCode.UNAUTHENTICATED && !Strings.isNullOrEmpty(apiKey)) {
+            if (e.status().code() == FlightStatusCode.UNAUTHENTICATED && usesHandshakeAuth()) {
                 try {
                     FlightChannel[] rebuilt = currentChannels();
                     return doFlightActionOnce(actionType, requestBody, rebuilt, useStreamOptions, perCallTimeout);
@@ -2313,8 +2345,9 @@ public class SpiceClient implements AutoCloseable {
                 return true;
             case UNAUTHENTICATED:
                 // Retried after maybeRebuildOnAuthError() re-handshakes; only
-                // meaningful for authenticated clients.
-                return !Strings.isNullOrEmpty(apiKey);
+                // meaningful for clients that authenticate with a handshake. A
+                // rejected Bearer API key is final.
+                return usesHandshakeAuth();
             default:
                 return false;
         }

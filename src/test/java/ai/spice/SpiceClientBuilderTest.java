@@ -72,13 +72,21 @@ public class SpiceClientBuilderTest extends TestCase {
         }
     }
 
-    public void testWithInvalidApiKeyFormat() throws Exception {
+    public void testWithPlainApiKey() throws Exception {
+        // Plain keys, as configured on a Spice OSS runtime, are accepted.
         try {
-            SpiceClient.builder().withApiKey("invalidformat");
-            fail("Should throw exception for API key without pipe");
-        } catch (IllegalArgumentException e) {
-            assertTrue("Should mention invalid", e.getMessage().contains("invalid"));
+            SpiceClient.builder().withApiKey("plain-runtime-key");
+        } catch (Exception e) {
+            fail("Plain API key should not throw: " + e.getMessage());
         }
+    }
+
+    public void testCloudAppIdOnlyForWellFormedCloudKeys() {
+        assertEquals("app", SpiceClientBuilder.cloudAppId("app|secret"));
+        assertNull(SpiceClientBuilder.cloudAppId("plain-key"));
+        assertNull(SpiceClientBuilder.cloudAppId("a|b|c"));
+        assertNull(SpiceClientBuilder.cloudAppId("|secret"));
+        assertNull(SpiceClientBuilder.cloudAppId("app|"));
     }
 
     // ==================== Flight Address Tests ====================

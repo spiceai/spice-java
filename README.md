@@ -74,6 +74,20 @@ public class Example {
 
 ```
 
+#### Local runtime secured with an API key
+
+When the runtime enables [API key auth](https://spiceai.org/docs/api/auth), pass the key exactly as configured in `spicepod.yaml`:
+
+```java
+try (SpiceClient client = SpiceClient.builder()
+        .withApiKey("my-runtime-key")
+        .build()) {
+    // ...
+}
+```
+
+A plain key goes out as `Authorization: Bearer <key>` on every Flight call and as `X-API-Key` on HTTP calls. Spice.ai Cloud keys (`appId|key`) keep using the Flight Basic auth handshake.
+
 ### With [Spice.ai Cloud](https://spice.ai)
 
 Create a [free Spice.ai account](https://spice.ai/login) to obtain an API_KEY
