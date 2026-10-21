@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792484331073,
+  "lastUpdate": 1792570699359,
   "repoUrl": "https://github.com/spiceai/spice-java",
   "entries": {
     "spice-java in-process benchmarks": [
@@ -3396,6 +3396,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "sql() p50",
             "value": 1172,
+            "unit": "us"
+          },
+          {
+            "name": "param-root bytes per 100 binds",
+            "value": 3490,
+            "unit": "bytes"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Luke Kim",
+            "username": "lukekim",
+            "email": "80174+lukekim@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "77659507409a19b99725f88c218a7a3bc1b16c06",
+          "message": "fix: accept plain API keys for API-key-secured OSS runtimes (#60)\n\n* fix: accept plain API keys for API-key-secured OSS runtimes\n\n* fix: don't re-prepare a cached statement after a rejected Bearer API key",
+          "timestamp": "2026-10-20T01:34:30Z",
+          "url": "https://github.com/spiceai/spice-java/commit/77659507409a19b99725f88c218a7a3bc1b16c06"
+        },
+        "date": 1792570698989,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "queryWithParams cached p50",
+            "value": 2902,
+            "unit": "us"
+          },
+          {
+            "name": "queryWithParams uncached p50",
+            "value": 3179,
+            "unit": "us"
+          },
+          {
+            "name": "sql() p50",
+            "value": 1091,
             "unit": "us"
           },
           {
