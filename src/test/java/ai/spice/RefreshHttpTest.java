@@ -41,9 +41,11 @@ import junit.framework.TestCase;
 public class RefreshHttpTest extends TestCase {
 
     private HttpServer httpServer;
+    private TestFlightSqlServer flightServer;
     private final AtomicReference<String> lastPath = new AtomicReference<>();
     private final AtomicReference<String> lastBody = new AtomicReference<>();
     private final AtomicReference<String> lastUserAgentHeader = new AtomicReference<>();
+    private final AtomicReference<String> lastApiKeyHeader = new AtomicReference<>();
     private volatile int responseCode = 201;
 
     @Override
@@ -57,12 +59,17 @@ public class RefreshHttpTest extends TestCase {
     @Override
     protected void tearDown() throws Exception {
         httpServer.stop(0);
+        if (this.flightServer != null) {
+            this.flightServer.close();
+            this.flightServer = null;
+        }
         super.tearDown();
     }
 
     private void handle(HttpExchange exchange) throws IOException {
         lastPath.set(exchange.getRequestURI().getPath());
         lastUserAgentHeader.set(exchange.getRequestHeaders().getFirst("X-Spice-User-Agent"));
+        lastApiKeyHeader.set(exchange.getRequestHeaders().getFirst("X-API-Key"));
         try (InputStream body = exchange.getRequestBody()) {
             lastBody.set(new String(body.readAllBytes(), StandardCharsets.UTF_8));
         }
@@ -71,9 +78,20 @@ public class RefreshHttpTest extends TestCase {
     }
 
     private SpiceClient newClient() throws Exception {
-        return SpiceClient.builder()
-                .withHttpAddress(new URI("http://localhost:" + httpServer.getAddress().getPort()))
-                .build();
+        return newClient(null);
+    }
+
+    private SpiceClient newClient(String apiKey) throws Exception {
+        SpiceClientBuilder builder = SpiceClient.builder()
+                .withHttpAddress(new URI("http://localhost:" + httpServer.getAddress().getPort()));
+        if (apiKey != null) {
+            // withApiKey() makes the constructor perform a real Flight handshake, so an
+            // authenticated client needs a real (test) Flight endpoint to handshake against.
+            String appId = apiKey.split("\\|")[0];
+            this.flightServer = new TestFlightSqlServer(appId, apiKey);
+            builder = builder.withFlightAddress(this.flightServer.flightUri()).withApiKey(apiKey);
+        }
+        return builder.build();
     }
 
     public void testRefreshDataset() throws Exception {
@@ -83,6 +101,14 @@ public class RefreshHttpTest extends TestCase {
             assertEquals("{}", lastBody.get());
             assertNotNull(lastUserAgentHeader.get());
             assertTrue(lastUserAgentHeader.get().startsWith("spice-java/"));
+            assertNull(lastApiKeyHeader.get());
+        }
+    }
+
+    public void testRefreshDatasetSendsApiKeyWhenConfigured() throws Exception {
+        try (SpiceClient client = newClient("test-app|test-key")) {
+            client.refreshDataset("taxi_trips");
+            assertEquals("test-app|test-key", lastApiKeyHeader.get());
         }
     }
 
