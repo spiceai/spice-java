@@ -1,0 +1,28 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>ai.spice.ci</groupId>
+    <artifactId>consumer-tls-smoke</artifactId>
+    <version>1</version>
+    <name>spice-java outside-consumer TLS smoke</name>
+    <description>
+        Minimal Maven project that depends ONLY on the published spiceai artifact.
+        Used by CI to prove consumers resolve a single Netty version and can open
+        a TLS Flight channel to flight.spiceai.io (auth error, not NoClassDefFoundError).
+    </description>
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- Overridden by CI after `mvn install` of the SDK under test. -->
+        <spiceai.version>0.8.1</spiceai.version>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>ai.spice</groupId>
+            <artifactId>spiceai</artifactId>
+            <version>${spiceai.version}</version>
+        </dependency>
+    </dependencies>
+</project>
