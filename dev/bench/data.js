@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792657129059,
+  "lastUpdate": 1792743502460,
   "repoUrl": "https://github.com/spiceai/spice-java",
   "entries": {
     "spice-java in-process benchmarks": [
@@ -3480,6 +3480,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "sql() p50",
             "value": 1078,
+            "unit": "us"
+          },
+          {
+            "name": "param-root bytes per 100 binds",
+            "value": 3490,
+            "unit": "bytes"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Jack Eadie",
+            "username": "Jeadie",
+            "email": "jack.eadie0@gmail.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "dd8fa899cf50bd20e034fdfdb6b7afac2520d0a2",
+          "message": "release: prepare v0.8.1 (#61)\n\n* release: prepare v0.8.1\n\n* docs: describe the API key change as fewer restrictions for self-managed runtimes\n\n* docs: say Bearer auth depends on the key format, not the runtime\n\n* docs: simplify the API key release note\n\n* docs: rename the API key release note heading",
+          "timestamp": "2026-10-22T15:34:28Z",
+          "url": "https://github.com/spiceai/spice-java/commit/dd8fa899cf50bd20e034fdfdb6b7afac2520d0a2"
+        },
+        "date": 1792743501114,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "queryWithParams cached p50",
+            "value": 1935,
+            "unit": "us"
+          },
+          {
+            "name": "queryWithParams uncached p50",
+            "value": 2044,
+            "unit": "us"
+          },
+          {
+            "name": "sql() p50",
+            "value": 831,
             "unit": "us"
           },
           {
