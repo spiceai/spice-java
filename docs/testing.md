@@ -11,6 +11,7 @@ Actions; every tier can also be run locally.
 | Performance (`PerfBenchmarkTest`) | Deterministic round-trip contracts (cached: 0 prepares per query; uncached: prepare+close per query), parameter-allocation bounds; latency percentiles tracked as a trend | Every PR/push (contracts); nightly trend on gh-pages with regression alerts |
 | Soak (`SoakTest`) | 30 minutes of sustained mixed workload with periodic `reset()`: zero errors, zero Arrow buffer leaks (leak ⇒ `close()` throws), bounded thread growth, stable p99 across the run | Nightly |
 | Quality gates | SpotBugs, Checkstyle, Maven Enforcer, OWASP dependency-check (CVSS ≥ 7 fails), japicmp API-compatibility vs the last release, CodeQL | Every PR/push |
+| Consumer TLS smoke (`ci/consumer-tls-smoke`) | A minimal Maven project depending only on the locally installed `ai.spice:spiceai` artifact resolves a single Netty 4.x version and opens a TLS channel to `flight.spiceai.io`. A dummy API key must produce an auth error, not `NoClassDefFoundError: LeakPresenceDetector` | Every PR/push (`consumer-tls-smoke` job) |
 
 ## Running locally
 
@@ -34,6 +35,11 @@ BENCH_JSON=/tmp/bench.json mvn test -Dtest=PerfBenchmarkTest
 
 # API compatibility vs the last release
 mvn package -DskipTests -Dgpg.skip japicmp:cmp
+
+# Outside-consumer TLS smoke (installs this checkout, then depends on it)
+mvn install -DskipTests -Dgpg.skip
+SPICEAI_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout) \
+  bash ci/consumer-tls-smoke/run.sh
 ```
 
 ## Conventions

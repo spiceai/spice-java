@@ -1693,6 +1693,9 @@ public class SpiceClient implements AutoCloseable {
                     .timeout(HTTP_REQUEST_TIMEOUT)
                     .header("Content-Type", "application/json")
                     .header("X-Spice-User-Agent", Config.getUserAgent());
+            if (!Strings.isNullOrEmpty(this.apiKey)) {
+                builder = builder.header("X-API-Key", this.apiKey);
+            }
 
             if (refreshOptions != null) {
                 String json = GSON.toJson(refreshOptions);

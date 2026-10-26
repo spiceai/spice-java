@@ -74,6 +74,31 @@
             <groupId>org.apache.arrow</groupId>
             <artifactId>flight-sql</artifactId>
             <version>19.0.0</version>
+            <exclusions>
+                <!-- flight-core 19 inherits Arrow 19's netty-bom 4.2.9.Final for
+                     handler/buffer/transport (and handler 4.2 pulls codec-base).
+                     Maven does not apply this SDK's dependencyManagement BOM to
+                     consumers, so those 4.2 modules would otherwise sit next to
+                     4.1.x from netty-transport-native-epoll and crash TLS with
+                     NoClassDefFoundError: io.netty.util.LeakPresenceDetector.
+                     Re-added below at ${netty.version} as direct dependencies. -->
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-handler</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-buffer</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-transport</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-codec-base</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>com.google.code.gson</groupId>
@@ -96,6 +121,61 @@
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcpkix-jdk18on</artifactId>
             <version>1.84</version>
+        </dependency>
+        <!-- Pin the Netty modules the Flight/gRPC stack needs as *direct*
+             dependencies. flight-core 19 declares handler/buffer/transport
+             (resolved via Arrow's netty-bom 4.2.9.Final); grpc-netty 1.79.0
+             declares codec-http2/handler-proxy at 4.1.130.Final. Direct pins
+             at ${netty.version} are published in this POM and win Maven
+             nearest-wins mediation for consumers, who do not inherit our
+             netty-bom import. Stay on 4.1.x: grpc-netty 1.79 is built against
+             4.1, and Arrow Flight 19 works on that line (the modules it
+             actually uses are the 4.1-compatible buffer/handler/transport
+             APIs). Do NOT move these to 4.2. -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-common</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-buffer</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-http</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-http2</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler-proxy</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-native-unix-common</artifactId>
+            <version>${netty.version}</version>
         </dependency>
         <!-- Native epoll transport for Linux: lets gRPC/Netty use epoll instead of NIO
              for lower-latency, lower-allocation socket I/O on Linux servers. -->

@@ -257,3 +257,28 @@ jobs:
         env:
           SPICE_E2E_CHAOS: "1"
         run: mvn test -B -Dtest=ChaosE2ETest -DfailIfNoTests=true
+
+  consumer-tls-smoke:
+    name: Consumer TLS smoke (installed artifact)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: temurin
+          cache: maven
+
+      - name: Install SDK to local Maven repo
+        run: mvn install -DskipTests=true -Dgpg.skip -B -V
+
+      - name: "Outside consumer: single Netty version + Cloud TLS handshake"
+        run: |
+          export SPICEAI_VERSION
+          SPICEAI_VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
+          bash ci/consumer-tls-smoke/run.sh
