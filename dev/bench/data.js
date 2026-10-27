@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793003086920,
+  "lastUpdate": 1793089172793,
   "repoUrl": "https://github.com/spiceai/spice-java",
   "entries": {
     "spice-java in-process benchmarks": [
@@ -3648,6 +3648,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "sql() p50",
             "value": 1115,
+            "unit": "us"
+          },
+          {
+            "name": "param-root bytes per 100 binds",
+            "value": 3490,
+            "unit": "bytes"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]",
+            "email": "49699333+dependabot[bot]@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "5b22daa06d4e8e1c37b5a8d12b3e063d1ee2ac78",
+          "message": "chore(deps): bump the maven group across 1 directory with 4 updates (#63)\n\nBumps the maven group with 4 updates in the / directory: [io.netty:netty-handler](https://github.com/netty/netty), [io.netty:netty-codec](https://github.com/netty/netty), [io.netty:netty-codec-http](https://github.com/netty/netty) and [io.netty:netty-codec-http2](https://github.com/netty/netty).\n\n\nUpdates `io.netty:netty-handler` from 4.1.135.Final to 4.1.137.Final\n- [Release notes](https://github.com/netty/netty/releases)\n- [Commits](https://github.com/netty/netty/compare/netty-4.1.135.Final...netty-4.1.137.Final)\n\nUpdates `io.netty:netty-codec` from 4.1.135.Final to 4.1.137.Final\n- [Release notes](https://github.com/netty/netty/releases)\n- [Commits](https://github.com/netty/netty/compare/netty-4.1.135.Final...netty-4.1.137.Final)\n\nUpdates `io.netty:netty-codec-http` from 4.1.135.Final to 4.1.137.Final\n- [Release notes](https://github.com/netty/netty/releases)\n- [Commits](https://github.com/netty/netty/compare/netty-4.1.135.Final...netty-4.1.137.Final)\n\nUpdates `io.netty:netty-codec-http2` from 4.1.135.Final to 4.1.137.Final\n- [Release notes](https://github.com/netty/netty/releases)\n- [Commits](https://github.com/netty/netty/compare/netty-4.1.135.Final...netty-4.1.137.Final)\n\n---\nupdated-dependencies:\n- dependency-name: io.netty:netty-handler\n  dependency-version: 4.1.137.Final\n  dependency-type: direct:production\n  dependency-group: maven\n- dependency-name: io.netty:netty-codec\n  dependency-version: 4.1.137.Final\n  dependency-type: direct:production\n  dependency-group: maven\n- dependency-name: io.netty:netty-codec-http\n  dependency-version: 4.1.137.Final\n  dependency-type: direct:production\n  dependency-group: maven\n- dependency-name: io.netty:netty-codec-http2\n  dependency-version: 4.1.137.Final\n  dependency-type: direct:production\n  dependency-group: maven\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-26T20:38:12Z",
+          "url": "https://github.com/spiceai/spice-java/commit/5b22daa06d4e8e1c37b5a8d12b3e063d1ee2ac78"
+        },
+        "date": 1793089172402,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "queryWithParams cached p50",
+            "value": 2715,
+            "unit": "us"
+          },
+          {
+            "name": "queryWithParams uncached p50",
+            "value": 2899,
+            "unit": "us"
+          },
+          {
+            "name": "sql() p50",
+            "value": 1102,
             "unit": "us"
           },
           {
