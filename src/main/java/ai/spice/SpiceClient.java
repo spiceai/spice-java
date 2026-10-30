@@ -838,6 +838,11 @@ public class SpiceClient implements AutoCloseable {
      * synchronously.
      *
      * <p>
+     * Returns once the result stream is open and its schema has arrived, so a
+     * transient failure opening the stream (including a concurrent
+     * {@link #reset()}) is retried like any other query failure.
+     *
+     * <p>
      * Use {@link #query(String)} instead to submit sql for asynchronous
      * execution on the runtime and poll for completion, which requires the
      * runtime to be running in distributed/scheduler mode.
@@ -2328,7 +2333,22 @@ public class SpiceClient implements AutoCloseable {
                         + "Use sqlWithParams() (ArrowReader) to consume all endpoints.", endpoints.size());
             }
             Ticket ticket = endpoints.get(0).getTicket();
-            return channel.client.getStream(ticket, channel.streamOptions);
+            FlightStream stream = channel.client.getStream(ticket, channel.streamOptions);
+            // getStream() reports a failed DoGet (e.g. a channel retired by a
+            // concurrent reset()) only on the stream's first next(), outside the
+            // retryer. Wait for the schema so it surfaces here and is retried,
+            // as FlightInfoReader does for sqlWithParams().
+            try {
+                stream.getSchema();
+            } catch (RuntimeException e) {
+                try {
+                    stream.close();
+                } catch (Exception closeEx) {
+                    e.addSuppressed(closeEx);
+                }
+                throw e;
+            }
+            return stream;
         } catch (FlightRuntimeException e) {
             maybeRebuildOnAuthError(e, snapshot);
             throw e;
