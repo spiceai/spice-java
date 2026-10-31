@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793348047851,
+  "lastUpdate": 1793434249368,
   "repoUrl": "https://github.com/spiceai/spice-java",
   "entries": {
     "spice-java in-process benchmarks": [
@@ -3816,6 +3816,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "sql() p50",
             "value": 858,
+            "unit": "us"
+          },
+          {
+            "name": "param-root bytes per 100 binds",
+            "value": 3490,
+            "unit": "bytes"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Viktor Yershov",
+            "username": "krinart",
+            "email": "viktor@spice.ai"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "b6067c49f5c53ff3b87306cf83158766517cfd14",
+          "message": "build: bump central-publishing-maven-plugin to 0.12.0 (#65)\n\n* build: bump central-publishing-maven-plugin to 0.12.0\n\n* build: drop plugin version comment",
+          "timestamp": "2026-10-27T20:13:37Z",
+          "url": "https://github.com/spiceai/spice-java/commit/b6067c49f5c53ff3b87306cf83158766517cfd14"
+        },
+        "date": 1793434248398,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "queryWithParams cached p50",
+            "value": 2550,
+            "unit": "us"
+          },
+          {
+            "name": "queryWithParams uncached p50",
+            "value": 2791,
+            "unit": "us"
+          },
+          {
+            "name": "sql() p50",
+            "value": 1115,
             "unit": "us"
           },
           {
