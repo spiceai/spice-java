@@ -428,26 +428,28 @@ public class Param {
 
     /**
      * Creates a timezone-aware timestamp parameter tagged with the value's
-     * offset. The bound value is the same instant.
+     * offset. The bound value is the same instant. A null value binds a
+     * typed SQL NULL tagged UTC.
      *
      * @param value The offset date-time
      * @param unit  The time unit
      * @return A new Param with type Timestamp(unit, offset)
      */
     public static Param timestampTz(OffsetDateTime value, TimeUnit unit) {
-        return new Param(value, new ArrowType.Timestamp(unit, arrowTimezone(value.getOffset())));
+        return new Param(value, new ArrowType.Timestamp(unit, value == null ? "UTC" : arrowTimezone(value.getOffset())));
     }
 
     /**
      * Creates a timezone-aware timestamp parameter tagged with the value's zone
-     * id. The bound value is the same instant.
+     * id. The bound value is the same instant. A null value binds a typed
+     * SQL NULL tagged UTC.
      *
      * @param value The zoned date-time
      * @param unit  The time unit
      * @return A new Param with type Timestamp(unit, zone)
      */
     public static Param timestampTz(ZonedDateTime value, TimeUnit unit) {
-        return new Param(value, new ArrowType.Timestamp(unit, arrowTimezone(value.getZone())));
+        return new Param(value, new ArrowType.Timestamp(unit, value == null ? "UTC" : arrowTimezone(value.getZone())));
     }
 
     /**

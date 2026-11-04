@@ -145,6 +145,13 @@ public class TimestampParamTest extends TestCase {
             try (VectorSchemaRoot root = client.createParameterRoot(Param.timestamp(null, TimeUnit.MICROSECOND))) {
                 assertTrue(root.getVector(0).isNull(0));
             }
+            for (Param p : new Param[] { Param.timestampTz((Instant) null, TimeUnit.MICROSECOND),
+                    Param.timestampTz((OffsetDateTime) null, TimeUnit.MICROSECOND),
+                    Param.timestampTz((ZonedDateTime) null, TimeUnit.MICROSECOND) }) {
+                try (VectorSchemaRoot root = client.createParameterRoot(p)) {
+                    assertTrue(root.getVector(0).isNull(0));
+                }
+            }
         }
     }
 
