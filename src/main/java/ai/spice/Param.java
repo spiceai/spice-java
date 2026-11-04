@@ -394,7 +394,7 @@ public class Param {
      * @throws IllegalArgumentException if {@code timezone} is not a valid zone
      */
     public static Param timestamp(LocalDateTime value, TimeUnit unit, String timezone) {
-        if (timezone != null) {
+        if (timezone != null && !timezone.isEmpty()) {
             parseZone(timezone);
         }
         // Fast path for common case: microseconds with UTC
@@ -422,7 +422,7 @@ public class Param {
      * @param unit  The time unit
      * @return A new Param with type Timestamp(unit, "UTC")
      */
-    public static Param timestamp(Instant value, TimeUnit unit) {
+    public static Param timestampTz(Instant value, TimeUnit unit) {
         return new Param(value, new ArrowType.Timestamp(unit, "UTC"));
     }
 
@@ -434,7 +434,7 @@ public class Param {
      * @param unit  The time unit
      * @return A new Param with type Timestamp(unit, offset)
      */
-    public static Param timestamp(OffsetDateTime value, TimeUnit unit) {
+    public static Param timestampTz(OffsetDateTime value, TimeUnit unit) {
         return new Param(value, new ArrowType.Timestamp(unit, arrowTimezone(value.getOffset())));
     }
 
@@ -446,17 +446,27 @@ public class Param {
      * @param unit  The time unit
      * @return A new Param with type Timestamp(unit, zone)
      */
-    public static Param timestamp(ZonedDateTime value, TimeUnit unit) {
+    public static Param timestampTz(ZonedDateTime value, TimeUnit unit) {
         return new Param(value, new ArrowType.Timestamp(unit, arrowTimezone(value.getZone())));
     }
 
     /**
-     * Returns the Arrow timezone string for a Java zone. UTC offsets map to
-     * "+00:00" since Arrow consumers do not all accept "Z".
+     * Returns the Arrow timezone string for a Java zone: the IANA id for a
+     * region, "+HH:MM" for a fixed offset ("+00:00" for UTC, since Arrow
+     * consumers do not all accept "Z").
      */
     static String arrowTimezone(ZoneId zone) {
-        if (zone instanceof ZoneOffset && ((ZoneOffset) zone).getTotalSeconds() == 0) {
-            return "+00:00";
+        ZoneId normalized = zone.normalized();
+        if (normalized instanceof ZoneOffset) {
+            // Fixed offsets (including Java-only ids such as "UTC+05:30") are
+            // written as "+HH:MM", the form Arrow implementations parse. An
+            // offset with a seconds part cannot be expressed, so tag UTC; the
+            // bound value is the same instant either way.
+            int total = ((ZoneOffset) normalized).getTotalSeconds();
+            if (total == 0 || total % 60 != 0) {
+                return "+00:00";
+            }
+            return normalized.getId();
         }
         return zone.getId();
     }

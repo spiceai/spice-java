@@ -75,13 +75,13 @@ public class TimestampParamTest extends TestCase {
         try (SpiceClient client = SpiceClient.builder().build()) {
             Instant max = Instant.ofEpochSecond(0, Long.MAX_VALUE); // 2262-04-11T23:47:16.854775807Z
             Instant min = Instant.ofEpochSecond(0, Long.MIN_VALUE); // 1677-09-21T00:12:43.145224192Z
-            assertEquals(Long.MAX_VALUE, encode(client, Param.timestamp(max, TimeUnit.NANOSECOND)));
-            assertEquals(Long.MIN_VALUE, encode(client, Param.timestamp(min, TimeUnit.NANOSECOND)));
+            assertEquals(Long.MAX_VALUE, encode(client, Param.timestampTz(max, TimeUnit.NANOSECOND)));
+            assertEquals(Long.MIN_VALUE, encode(client, Param.timestampTz(min, TimeUnit.NANOSECOND)));
             assertEquals(Long.MAX_VALUE, encode(client,
                     Param.timestamp(LocalDateTime.ofInstant(max, ZoneOffset.UTC), TimeUnit.NANOSECOND, null)));
             for (Instant out : new Instant[] { max.plusNanos(1), min.minusNanos(1) }) {
                 try {
-                    encode(client, Param.timestamp(out, TimeUnit.NANOSECOND));
+                    encode(client, Param.timestampTz(out, TimeUnit.NANOSECOND));
                     fail("expected out-of-range error for " + out);
                 } catch (IllegalArgumentException expected) {
                     // ok
@@ -103,9 +103,9 @@ public class TimestampParamTest extends TestCase {
     public void testPreEpochSubSecond() throws Exception {
         try (SpiceClient client = SpiceClient.builder().build()) {
             Instant i = Instant.parse("1969-12-31T23:59:59.999999Z");
-            assertEquals(-1L, encode(client, Param.timestamp(i, TimeUnit.MICROSECOND)));
-            assertEquals(-1L, encode(client, Param.timestamp(i, TimeUnit.MILLISECOND)));
-            assertEquals(-1L, encode(client, Param.timestamp(i, TimeUnit.SECOND)));
+            assertEquals(-1L, encode(client, Param.timestampTz(i, TimeUnit.MICROSECOND)));
+            assertEquals(-1L, encode(client, Param.timestampTz(i, TimeUnit.MILLISECOND)));
+            assertEquals(-1L, encode(client, Param.timestampTz(i, TimeUnit.SECOND)));
         }
     }
 
@@ -130,6 +130,30 @@ public class TimestampParamTest extends TestCase {
             assertEquals((LDT_0300_UTC_MICROS + 8 * 3_600_000_000L) / 1_000_000L,
                     encode(client, Param.timestamp(LDT_0300, TimeUnit.SECOND, "America/Los_Angeles")));
         }
+    }
+
+    public void testEmptyTimezoneIsNaive() throws Exception {
+        try (SpiceClient client = SpiceClient.builder().build()) {
+            assertEquals(LDT_0300_UTC_MICROS, encode(client, Param.timestamp(LDT_0300, TimeUnit.MICROSECOND, "")));
+            assertEquals(LDT_0300_UTC_MICROS, encode(client,
+                    Param.of(LDT_0300, new ArrowType.Timestamp(TimeUnit.MICROSECOND, ""))));
+        }
+    }
+
+    public void testNullTimestampStillCompilesAndBindsNull() throws Exception {
+        try (SpiceClient client = SpiceClient.builder().build()) {
+            try (VectorSchemaRoot root = client.createParameterRoot(Param.timestamp(null, TimeUnit.MICROSECOND))) {
+                assertTrue(root.getVector(0).isNull(0));
+            }
+        }
+    }
+
+    public void testFixedZonesUseArrowOffsetForm() {
+        assertEquals("+05:30", Param.arrowTimezone(ZoneId.of("UTC+05:30")));
+        assertEquals("+00:00", Param.arrowTimezone(ZoneOffset.UTC));
+        assertEquals("+00:00", Param.arrowTimezone(ZoneOffset.ofHoursMinutesSeconds(5, 30, 15)));
+        assertEquals("-08:00", Param.arrowTimezone(ZoneId.of("GMT-08:00")));
+        assertEquals("America/Los_Angeles", Param.arrowTimezone(ZoneId.of("America/Los_Angeles")));
     }
 
     public void testInvalidTimezoneRejected() {
@@ -167,8 +191,8 @@ public class TimestampParamTest extends TestCase {
             assertEquals(odt.toInstant().toEpochMilli() * 1_000L, encode(client, odt));
             assertEquals(zdt.toInstant().toEpochMilli() * 1_000L, encode(client, zdt));
             assertEquals(LDT_0300_UTC_MICROS, encode(client, utc));
-            assertEquals(zdt.toInstant().toEpochMilli(), encode(client, Param.timestamp(zdt, TimeUnit.MILLISECOND)));
-            assertEquals("+05:30", type(client, Param.timestamp(odt, TimeUnit.NANOSECOND)).getTimezone());
+            assertEquals(zdt.toInstant().toEpochMilli(), encode(client, Param.timestampTz(zdt, TimeUnit.MILLISECOND)));
+            assertEquals("+05:30", type(client, Param.timestampTz(odt, TimeUnit.NANOSECOND)).getTimezone());
             // an instant-typed value into a UTC vector keeps the instant
             assertEquals(zdt.toInstant().toEpochMilli() * 1_000L, encode(client,
                     Param.of(zdt, new ArrowType.Timestamp(TimeUnit.MICROSECOND, "UTC"))));

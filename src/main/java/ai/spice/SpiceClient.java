@@ -1406,6 +1406,9 @@ public class SpiceClient implements AutoCloseable {
      *                                  64-bit count of {@code unit}
      */
     static long toEpochValue(Object value, TimeUnit unit, String timezone) {
+        if (timezone != null && timezone.isEmpty()) {
+            timezone = null; // Arrow treats an empty timezone as "no timezone"
+        }
         Instant instant;
         if (value instanceof Instant) {
             instant = (Instant) value;
