@@ -27,6 +27,12 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.DateTimeException;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 
 import org.apache.arrow.vector.types.DateUnit;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
@@ -372,12 +378,25 @@ public class Param {
     /**
      * Creates a timestamp parameter with specified unit and timezone.
      *
+     * <p>
+     * The {@code LocalDateTime} is interpreted as wall-clock time in
+     * {@code timezone}: {@code timestamp(2024-01-01T03:00, MICROSECOND,
+     * "America/Los_Angeles")} binds the instant 2024-01-01T11:00Z. Pass
+     * {@code null} for a timestamp without a timezone. A value that does not
+     * fit in the chosen unit (for example years after 2262 at NANOSECOND) is
+     * rejected when the query is bound rather than silently wrapped.
+     *
      * @param value    The LocalDateTime value
      * @param unit     The time unit
-     * @param timezone The timezone string (e.g., "UTC", "America/New_York")
+     * @param timezone An IANA zone id or offset (e.g., "UTC", "America/New_York",
+     *                 "+05:30"), or null for no timezone
      * @return A new Param with Timestamp type
+     * @throws IllegalArgumentException if {@code timezone} is not a valid zone
      */
     public static Param timestamp(LocalDateTime value, TimeUnit unit, String timezone) {
+        if (timezone != null) {
+            parseZone(timezone);
+        }
         // Fast path for common case: microseconds with UTC
         if (unit == TimeUnit.MICROSECOND && "UTC".equals(timezone)) {
             return new Param(value, TIMESTAMP_MICRO_UTC);
@@ -394,6 +413,65 @@ public class Param {
      */
     public static Param timestamp(LocalDateTime value, TimeUnit unit) {
         return timestamp(value, unit, "UTC");
+    }
+
+    /**
+     * Creates a timezone-aware timestamp parameter for an instant, tagged UTC.
+     *
+     * @param value The instant
+     * @param unit  The time unit
+     * @return A new Param with type Timestamp(unit, "UTC")
+     */
+    public static Param timestamp(Instant value, TimeUnit unit) {
+        return new Param(value, new ArrowType.Timestamp(unit, "UTC"));
+    }
+
+    /**
+     * Creates a timezone-aware timestamp parameter tagged with the value's
+     * offset. The bound value is the same instant.
+     *
+     * @param value The offset date-time
+     * @param unit  The time unit
+     * @return A new Param with type Timestamp(unit, offset)
+     */
+    public static Param timestamp(OffsetDateTime value, TimeUnit unit) {
+        return new Param(value, new ArrowType.Timestamp(unit, arrowTimezone(value.getOffset())));
+    }
+
+    /**
+     * Creates a timezone-aware timestamp parameter tagged with the value's zone
+     * id. The bound value is the same instant.
+     *
+     * @param value The zoned date-time
+     * @param unit  The time unit
+     * @return A new Param with type Timestamp(unit, zone)
+     */
+    public static Param timestamp(ZonedDateTime value, TimeUnit unit) {
+        return new Param(value, new ArrowType.Timestamp(unit, arrowTimezone(value.getZone())));
+    }
+
+    /**
+     * Returns the Arrow timezone string for a Java zone. UTC offsets map to
+     * "+00:00" since Arrow consumers do not all accept "Z".
+     */
+    static String arrowTimezone(ZoneId zone) {
+        if (zone instanceof ZoneOffset && ((ZoneOffset) zone).getTotalSeconds() == 0) {
+            return "+00:00";
+        }
+        return zone.getId();
+    }
+
+    /**
+     * Parses an Arrow timezone string into a Java zone.
+     *
+     * @throws IllegalArgumentException if the string is not a valid zone id or offset
+     */
+    static ZoneId parseZone(String timezone) {
+        try {
+            return ZoneId.of(timezone);
+        } catch (DateTimeException e) {
+            throw new IllegalArgumentException("Invalid timestamp timezone: " + timezone, e);
+        }
     }
 
     /**
