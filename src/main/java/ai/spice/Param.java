@@ -395,7 +395,20 @@ public class Param {
      */
     public static Param timestamp(LocalDateTime value, TimeUnit unit, String timezone) {
         if (timezone != null && !timezone.isEmpty()) {
-            parseZone(timezone);
+            ZoneId zone = parseZone(timezone);
+            if (zone instanceof ZoneOffset || zone.getId().matches("(UTC|GMT|UT)[+-].*")
+                    || ALIAS_ZONES.containsKey(timezone)) {
+                // Fixed offset: write it in the "+HH:MM" form Arrow parses.
+                String arrowTz = arrowTimezone(zone);
+                int offsetSeconds = ((ZoneOffset) zone.normalized()).getTotalSeconds();
+                if ("+00:00".equals(arrowTz) && offsetSeconds != 0) {
+                    // Offset with a seconds part: not expressible in Arrow, so
+                    // bind the instant it denotes, tagged UTC.
+                    return new Param(value == null ? null : value.atZone(zone).toInstant(),
+                            new ArrowType.Timestamp(unit, arrowTz));
+                }
+                timezone = arrowTz;
+            }
         }
         // Fast path for common case: microseconds with UTC
         if (unit == TimeUnit.MICROSECOND && "UTC".equals(timezone)) {
@@ -473,6 +486,10 @@ public class Param {
         return zone.getId();
     }
 
+    /** IANA aliases java.time only resolves through its short-id table. */
+    private static final java.util.Map<String, String> ALIAS_ZONES = java.util.Map.of(
+            "EST", "-05:00", "MST", "-07:00", "HST", "-10:00");
+
     /**
      * Parses an Arrow timezone string into a Java zone.
      *
@@ -480,7 +497,7 @@ public class Param {
      */
     static ZoneId parseZone(String timezone) {
         try {
-            return ZoneId.of(timezone);
+            return ZoneId.of(timezone, ALIAS_ZONES);
         } catch (DateTimeException e) {
             throw new IllegalArgumentException("Invalid timestamp timezone: " + timezone, e);
         }

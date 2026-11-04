@@ -163,6 +163,33 @@ public class TimestampParamTest extends TestCase {
         assertEquals("America/Los_Angeles", Param.arrowTimezone(ZoneId.of("America/Los_Angeles")));
     }
 
+    public void testFixedOffsetFactoryTimezoneNormalized() throws Exception {
+        try (SpiceClient client = SpiceClient.builder().build()) {
+            Param p = Param.timestamp(LDT_0300, TimeUnit.MICROSECOND, "UTC+05:30");
+            assertEquals("+05:30", type(client, p).getTimezone());
+            assertEquals(LDT_0300_UTC_MICROS - 19_800_000_000L, encode(client, p));
+            // seconds-bearing offset: tagged UTC, same instant as 03:00 at +05:30:15
+            Param s = Param.timestamp(LDT_0300, TimeUnit.MICROSECOND, "+05:30:15");
+            assertEquals("+00:00", type(client, s).getTimezone());
+            assertEquals(LDT_0300_UTC_MICROS - 19_815_000_000L, encode(client, s));
+            // region ids and UTC are kept as given
+            assertEquals("UTC", ((ArrowType.Timestamp) Param.timestamp(LDT_0300, TimeUnit.MILLISECOND, "UTC")
+                    .getType()).getTimezone());
+            assertEquals("America/Los_Angeles", ((ArrowType.Timestamp) Param.timestamp(LDT_0300,
+                    TimeUnit.MICROSECOND, "America/Los_Angeles").getType()).getTimezone());
+        }
+    }
+
+    public void testIanaAliasZonesAccepted() throws Exception {
+        try (SpiceClient client = SpiceClient.builder().build()) {
+            Param est = Param.timestamp(LDT_0300, TimeUnit.MICROSECOND, "EST");
+            assertEquals("-05:00", type(client, est).getTimezone());
+            assertEquals(LDT_0300_UTC_MICROS + 18_000_000_000L, encode(client, est));
+            assertEquals(LDT_0300_UTC_MICROS + 36_000_000_000L, encode(client,
+                    Param.of(LDT_0300, new ArrowType.Timestamp(TimeUnit.MICROSECOND, "HST"))));
+        }
+    }
+
     public void testInvalidTimezoneRejected() {
         try {
             Param.timestamp(LDT_0300, TimeUnit.MICROSECOND, "Not/AZone");
