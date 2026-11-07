@@ -27,6 +27,12 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.DateTimeException;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 
 import org.apache.arrow.vector.types.DateUnit;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
@@ -372,12 +378,38 @@ public class Param {
     /**
      * Creates a timestamp parameter with specified unit and timezone.
      *
+     * <p>
+     * The {@code LocalDateTime} is interpreted as wall-clock time in
+     * {@code timezone}: {@code timestamp(2024-01-01T03:00, MICROSECOND,
+     * "America/Los_Angeles")} binds the instant 2024-01-01T11:00Z. Pass
+     * {@code null} for a timestamp without a timezone. A value that does not
+     * fit in the chosen unit (for example years after 2262 at NANOSECOND) is
+     * rejected when the query is bound rather than silently wrapped.
+     *
      * @param value    The LocalDateTime value
      * @param unit     The time unit
-     * @param timezone The timezone string (e.g., "UTC", "America/New_York")
+     * @param timezone An IANA zone id or offset (e.g., "UTC", "America/New_York",
+     *                 "+05:30"), or null for no timezone
      * @return A new Param with Timestamp type
+     * @throws IllegalArgumentException if {@code timezone} is not a valid zone
      */
     public static Param timestamp(LocalDateTime value, TimeUnit unit, String timezone) {
+        if (timezone != null && !timezone.isEmpty()) {
+            ZoneId zone = parseZone(timezone);
+            if (zone instanceof ZoneOffset || zone.getId().matches("(UTC|GMT|UT)[+-].*")
+                    || ALIAS_ZONES.containsKey(timezone)) {
+                // Fixed offset: write it in the "+HH:MM" form Arrow parses.
+                String arrowTz = arrowTimezone(zone);
+                int offsetSeconds = ((ZoneOffset) zone.normalized()).getTotalSeconds();
+                if ("+00:00".equals(arrowTz) && offsetSeconds != 0) {
+                    // Offset with a seconds part: not expressible in Arrow, so
+                    // bind the instant it denotes, tagged UTC.
+                    return new Param(value == null ? null : value.atZone(zone).toInstant(),
+                            new ArrowType.Timestamp(unit, arrowTz));
+                }
+                timezone = arrowTz;
+            }
+        }
         // Fast path for common case: microseconds with UTC
         if (unit == TimeUnit.MICROSECOND && "UTC".equals(timezone)) {
             return new Param(value, TIMESTAMP_MICRO_UTC);
@@ -394,6 +426,81 @@ public class Param {
      */
     public static Param timestamp(LocalDateTime value, TimeUnit unit) {
         return timestamp(value, unit, "UTC");
+    }
+
+    /**
+     * Creates a timezone-aware timestamp parameter for an instant, tagged UTC.
+     *
+     * @param value The instant
+     * @param unit  The time unit
+     * @return A new Param with type Timestamp(unit, "UTC")
+     */
+    public static Param timestampTz(Instant value, TimeUnit unit) {
+        return new Param(value, new ArrowType.Timestamp(unit, "UTC"));
+    }
+
+    /**
+     * Creates a timezone-aware timestamp parameter tagged with the value's
+     * offset. The bound value is the same instant. A null value binds a
+     * typed SQL NULL tagged UTC.
+     *
+     * @param value The offset date-time
+     * @param unit  The time unit
+     * @return A new Param with type Timestamp(unit, offset)
+     */
+    public static Param timestampTz(OffsetDateTime value, TimeUnit unit) {
+        return new Param(value, new ArrowType.Timestamp(unit, value == null ? "UTC" : arrowTimezone(value.getOffset())));
+    }
+
+    /**
+     * Creates a timezone-aware timestamp parameter tagged with the value's zone
+     * id. The bound value is the same instant. A null value binds a typed
+     * SQL NULL tagged UTC.
+     *
+     * @param value The zoned date-time
+     * @param unit  The time unit
+     * @return A new Param with type Timestamp(unit, zone)
+     */
+    public static Param timestampTz(ZonedDateTime value, TimeUnit unit) {
+        return new Param(value, new ArrowType.Timestamp(unit, value == null ? "UTC" : arrowTimezone(value.getZone())));
+    }
+
+    /**
+     * Returns the Arrow timezone string for a Java zone: the IANA id for a
+     * region, "+HH:MM" for a fixed offset ("+00:00" for UTC, since Arrow
+     * consumers do not all accept "Z").
+     */
+    static String arrowTimezone(ZoneId zone) {
+        ZoneId normalized = zone.normalized();
+        if (normalized instanceof ZoneOffset) {
+            // Fixed offsets (including Java-only ids such as "UTC+05:30") are
+            // written as "+HH:MM", the form Arrow implementations parse. An
+            // offset with a seconds part cannot be expressed, so tag UTC; the
+            // bound value is the same instant either way.
+            int total = ((ZoneOffset) normalized).getTotalSeconds();
+            if (total == 0 || total % 60 != 0) {
+                return "+00:00";
+            }
+            return normalized.getId();
+        }
+        return zone.getId();
+    }
+
+    /** IANA aliases java.time only resolves through its short-id table. */
+    private static final java.util.Map<String, String> ALIAS_ZONES = java.util.Map.of(
+            "EST", "-05:00", "MST", "-07:00", "HST", "-10:00");
+
+    /**
+     * Parses an Arrow timezone string into a Java zone.
+     *
+     * @throws IllegalArgumentException if the string is not a valid zone id or offset
+     */
+    static ZoneId parseZone(String timezone) {
+        try {
+            return ZoneId.of(timezone, ALIAS_ZONES);
+        } catch (DateTimeException e) {
+            throw new IllegalArgumentException("Invalid timestamp timezone: " + timezone, e);
+        }
     }
 
     /**

@@ -84,7 +84,21 @@ ArrowReader reader = client.sqlWithParams(
 | `LocalTime`     | Time32     | `Param.time32(v, unit)`        | ❌                     |
 | `LocalTime`     | Time64     | `Param.time64(v, unit)`        | ✅ (microseconds)      |
 | `LocalDateTime` | Timestamp  | `Param.timestamp(v, unit, tz)` | ✅ (microseconds, UTC) |
+| `Instant`        | Timestamp  | `Param.timestampTz(v, unit)`     | ✅ (microseconds, `UTC`) |
+| `OffsetDateTime` | Timestamp  | `Param.timestampTz(v, unit)`     | ✅ (microseconds, offset) |
+| `ZonedDateTime`  | Timestamp  | `Param.timestampTz(v, unit)`     | ✅ (microseconds, zone id) |
+| `java.sql.Timestamp` | Timestamp | `Param.of(v, type)`         | ✅ (microseconds, no zone) |
 | `Duration`      | Duration   | `Param.duration(v, unit)`      | ✅ (microseconds)      |
+
+Timestamp encoding rules:
+
+- A `LocalDateTime` is wall-clock time in the parameter's timezone:
+  `Param.timestamp(LocalDateTime.of(2024, 1, 15, 3, 0), TimeUnit.MICROSECOND, "America/Los_Angeles")`
+  binds 2024-01-15T11:00Z. Pass `null` (or `""`) as the timezone for a timestamp without one.
+- `Instant`, `OffsetDateTime` and `ZonedDateTime` bind the instant they denote.
+- A value that doesn't fit the unit throws `IllegalArgumentException` instead of
+  wrapping. Nanosecond timestamps cover 1677-09-21 to 2262-04-11, so use
+  microseconds for far-future sentinels such as 9999-12-31.
 
 ### Decimal Types
 

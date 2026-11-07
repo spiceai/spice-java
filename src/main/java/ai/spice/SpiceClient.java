@@ -35,7 +35,10 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -96,6 +99,7 @@ import org.apache.arrow.vector.TimeStampNanoTZVector;
 import org.apache.arrow.vector.TimeStampNanoVector;
 import org.apache.arrow.vector.TimeStampSecTZVector;
 import org.apache.arrow.vector.TimeStampSecVector;
+import org.apache.arrow.vector.TimeStampVector;
 import org.apache.arrow.vector.TinyIntVector;
 import org.apache.arrow.vector.UInt1Vector;
 import org.apache.arrow.vector.UInt2Vector;
@@ -1128,18 +1132,25 @@ public class SpiceClient implements AutoCloseable {
         for (FieldVector vector : root.getFieldVectors()) {
             vector.setInitialCapacity(1);
         }
-        root.allocateNew();
+        try {
+            root.allocateNew();
 
-        // Populate vectors — read value from original params to avoid intermediate arrays
-        for (int i = 0; i < numParams; i++) {
-            Object param = params[i];
-            Object value = (param instanceof Param) ? ((Param) param).getValue() : param;
-            FieldVector vector = root.getVector(i);
-            appendValueToVector(vector, 0, value, vector.getField().getType());
-            vector.setValueCount(1);
+            // Populate vectors — read value from original params to avoid intermediate arrays
+            for (int i = 0; i < numParams; i++) {
+                Object param = params[i];
+                Object value = (param instanceof Param) ? ((Param) param).getValue() : param;
+                FieldVector vector = root.getVector(i);
+                appendValueToVector(vector, 0, value, vector.getField().getType());
+                vector.setValueCount(1);
+            }
+
+            root.setRowCount(1);
+        } catch (RuntimeException e) {
+            // Free the buffers allocated above: the caller never receives the
+            // root, so without this the allocator reports a leak on close().
+            root.close();
+            throw e;
         }
-
-        root.setRowCount(1);
 
         logger.debug("Created parameter root: rowCount={}, schema={}",
                 root.getRowCount(), root.getSchema());
@@ -1157,6 +1168,7 @@ public class SpiceClient implements AutoCloseable {
     private static final ArrowType INFER_DATE32 = new ArrowType.Date(DateUnit.DAY);
     private static final ArrowType INFER_TIME64_MICRO = new ArrowType.Time(TimeUnit.MICROSECOND, 64);
     private static final ArrowType INFER_TIMESTAMP_MICRO_UTC = new ArrowType.Timestamp(TimeUnit.MICROSECOND, "UTC");
+    private static final ArrowType INFER_TIMESTAMP_MICRO_NAIVE = new ArrowType.Timestamp(TimeUnit.MICROSECOND, null);
     private static final ArrowType INFER_DURATION_MICRO = new ArrowType.Duration(TimeUnit.MICROSECOND);
 
     /**
@@ -1212,6 +1224,21 @@ public class SpiceClient implements AutoCloseable {
         }
         if (value instanceof LocalDateTime) {
             return INFER_TIMESTAMP_MICRO_UTC;
+        }
+        if (value instanceof Instant) {
+            return INFER_TIMESTAMP_MICRO_UTC;
+        }
+        if (value instanceof OffsetDateTime) {
+            return new ArrowType.Timestamp(TimeUnit.MICROSECOND,
+                    Param.arrowTimezone(((OffsetDateTime) value).getOffset()));
+        }
+        if (value instanceof ZonedDateTime) {
+            return new ArrowType.Timestamp(TimeUnit.MICROSECOND,
+                    Param.arrowTimezone(((ZonedDateTime) value).getZone()));
+        }
+        if (value instanceof java.sql.Timestamp) {
+            // JDBC semantics: a wall-clock timestamp without a zone.
+            return INFER_TIMESTAMP_MICRO_NAIVE;
         }
         if (value instanceof Duration) {
             return INFER_DURATION_MICRO;
@@ -1322,35 +1349,11 @@ public class SpiceClient implements AutoCloseable {
                 LocalTime time = (LocalTime) value;
                 ((TimeNanoVector) vector).setSafe(index, time.toNanoOfDay());
             }
-            // Timestamp vectors
-            else if (vector instanceof TimeStampSecVector) {
-                LocalDateTime dt = (LocalDateTime) value;
-                ((TimeStampSecVector) vector).setSafe(index, dt.toEpochSecond(ZoneOffset.UTC));
-            } else if (vector instanceof TimeStampSecTZVector) {
-                LocalDateTime dt = (LocalDateTime) value;
-                ((TimeStampSecTZVector) vector).setSafe(index, dt.toEpochSecond(ZoneOffset.UTC));
-            } else if (vector instanceof TimeStampMilliVector) {
-                LocalDateTime dt = (LocalDateTime) value;
-                ((TimeStampMilliVector) vector).setSafe(index, dt.toInstant(ZoneOffset.UTC).toEpochMilli());
-            } else if (vector instanceof TimeStampMilliTZVector) {
-                LocalDateTime dt = (LocalDateTime) value;
-                ((TimeStampMilliTZVector) vector).setSafe(index, dt.toInstant(ZoneOffset.UTC).toEpochMilli());
-            } else if (vector instanceof TimeStampMicroVector) {
-                LocalDateTime dt = (LocalDateTime) value;
-                long epochMicro = dt.toEpochSecond(ZoneOffset.UTC) * 1_000_000 + dt.getNano() / 1_000;
-                ((TimeStampMicroVector) vector).setSafe(index, epochMicro);
-            } else if (vector instanceof TimeStampMicroTZVector) {
-                LocalDateTime dt = (LocalDateTime) value;
-                long epochMicro = dt.toEpochSecond(ZoneOffset.UTC) * 1_000_000 + dt.getNano() / 1_000;
-                ((TimeStampMicroTZVector) vector).setSafe(index, epochMicro);
-            } else if (vector instanceof TimeStampNanoVector) {
-                LocalDateTime dt = (LocalDateTime) value;
-                long epochNano = dt.toEpochSecond(ZoneOffset.UTC) * 1_000_000_000 + dt.getNano();
-                ((TimeStampNanoVector) vector).setSafe(index, epochNano);
-            } else if (vector instanceof TimeStampNanoTZVector) {
-                LocalDateTime dt = (LocalDateTime) value;
-                long epochNano = dt.toEpochSecond(ZoneOffset.UTC) * 1_000_000_000 + dt.getNano();
-                ((TimeStampNanoTZVector) vector).setSafe(index, epochNano);
+            // Timestamp vectors (all units, with or without a timezone)
+            else if (vector instanceof TimeStampVector) {
+                ArrowType.Timestamp tsType = (ArrowType.Timestamp) vector.getField().getType();
+                ((TimeStampVector) vector).setSafe(index,
+                        toEpochValue(value, tsType.getUnit(), tsType.getTimezone()));
             }
             // Duration vector
             else if (vector instanceof DurationVector) {
@@ -1387,6 +1390,72 @@ public class SpiceClient implements AutoCloseable {
             throw new IllegalArgumentException(
                     "Cannot convert value of type " + value.getClass().getName() +
                             " to " + vector.getClass().getSimpleName(),
+                    e);
+        }
+    }
+
+    /**
+     * Converts a temporal value to an Arrow timestamp value in {@code unit}.
+     *
+     * <ul>
+     * <li>{@link Instant}, {@link OffsetDateTime}, {@link ZonedDateTime}: the
+     * instant is encoded as-is (Arrow stores UTC epoch values for every
+     * timestamp type).</li>
+     * <li>{@link LocalDateTime}: interpreted as wall-clock time in the vector's
+     * timezone (UTC when the type has no timezone).</li>
+     * <li>{@link java.sql.Timestamp}: its instant for a timezone-aware type, its
+     * {@code toLocalDateTime()} wall clock for a naive type.</li>
+     * </ul>
+     *
+     * @throws IllegalArgumentException if the value does not fit in a signed
+     *                                  64-bit count of {@code unit}
+     */
+    static long toEpochValue(Object value, TimeUnit unit, String timezone) {
+        if (timezone != null && timezone.isEmpty()) {
+            timezone = null; // Arrow treats an empty timezone as "no timezone"
+        }
+        Instant instant;
+        if (value instanceof Instant) {
+            instant = (Instant) value;
+        } else if (value instanceof OffsetDateTime) {
+            instant = ((OffsetDateTime) value).toInstant();
+        } else if (value instanceof ZonedDateTime) {
+            instant = ((ZonedDateTime) value).toInstant();
+        } else if (value instanceof java.sql.Timestamp) {
+            java.sql.Timestamp ts = (java.sql.Timestamp) value;
+            instant = timezone == null ? ts.toLocalDateTime().toInstant(ZoneOffset.UTC) : ts.toInstant();
+        } else if (value instanceof LocalDateTime) {
+            LocalDateTime ldt = (LocalDateTime) value;
+            instant = timezone == null ? ldt.toInstant(ZoneOffset.UTC) : ldt.atZone(Param.parseZone(timezone)).toInstant();
+        } else {
+            throw new ClassCastException(value.getClass().getName());
+        }
+        long seconds = instant.getEpochSecond();
+        long nanos = instant.getNano(); // always 0..999_999_999
+        if (seconds < 0 && nanos > 0) {
+            // Borrow one second so seconds * factor cannot overflow at the
+            // negative edge of the range (e.g. the minimum nanosecond value).
+            seconds += 1;
+            nanos -= 1_000_000_000L;
+        }
+        try {
+            switch (unit) {
+                case SECOND:
+                    return nanos < 0 ? seconds - 1 : seconds;
+                case MILLISECOND:
+                    return Math.addExact(Math.multiplyExact(seconds, 1_000L), Math.floorDiv(nanos, 1_000_000L));
+                case MICROSECOND:
+                    return Math.addExact(Math.multiplyExact(seconds, 1_000_000L), Math.floorDiv(nanos, 1_000L));
+                case NANOSECOND:
+                    return Math.addExact(Math.multiplyExact(seconds, 1_000_000_000L), nanos);
+                default:
+                    throw new IllegalArgumentException("Unsupported timestamp unit: " + unit);
+            }
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException("Timestamp " + value + " is out of range for unit " + unit
+                    + (unit == TimeUnit.NANOSECOND
+                            ? " (nanosecond timestamps cover 1677-09-21T00:12:43.145224192Z to 2262-04-11T23:47:16.854775807Z)"
+                            : ""),
                     e);
         }
     }
