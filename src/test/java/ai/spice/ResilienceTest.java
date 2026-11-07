@@ -209,6 +209,23 @@ public class ResilienceTest extends TestCase {
     }
 
     /**
+     * A reset() that lands after sql() has its FlightInfo but before it opens
+     * the result stream must not hand the caller a stream that fails on its
+     * first next() with "Channel shutdown invoked": that failure happens
+     * outside the retryer, so the caller sees it even though a retry on the
+     * fresh channels would succeed.
+     */
+    public void testResetBetweenGetFlightInfoAndGetStreamIsRetried() throws Exception {
+        try (TestFlightSqlServer server = new TestFlightSqlServer();
+                SpiceClient client = SpiceClient.builder().withFlightAddress(server.flightUri()).build()) {
+            server.onNextGetFlightInfo.set(client::reset);
+            try (FlightStream stream = client.sql("SELECT 1")) {
+                assertEquals(server.expectedTotalRows(), LocalFlightServerTest.countRows(stream));
+            }
+        }
+    }
+
+    /**
      * Regression test for the reset()-vs-queryWithParams race: concurrent
      * resets while parameterized queries are in flight must never surface
      * NullPointerException (previously the connection field could be nulled

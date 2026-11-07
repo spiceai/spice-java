@@ -103,6 +103,9 @@ final class TestFlightSqlServer implements AutoCloseable {
     private volatile CallStatus injectedFailureStatus = CallStatus.UNAVAILABLE;
     private final AtomicBoolean rejectNextBearer = new AtomicBoolean();
     volatile long getFlightInfoDelayMs = 0;
+    /** Runs inside the next GetFlightInfo, after it is received and before it answers; cleared once run. */
+    final java.util.concurrent.atomic.AtomicReference<Runnable> onNextGetFlightInfo =
+            new java.util.concurrent.atomic.AtomicReference<>();
     private final AtomicInteger failNextGetAsyncQueryResult = new AtomicInteger();
     private volatile CallStatus injectedAsyncQueryResultFailureStatus = CallStatus.UNAVAILABLE;
 
@@ -321,6 +324,10 @@ final class TestFlightSqlServer implements AutoCloseable {
     }
 
     private void maybeInjectGetFlightInfoFailure() {
+        Runnable hook = onNextGetFlightInfo.getAndSet(null);
+        if (hook != null) {
+            hook.run();
+        }
         if (getFlightInfoDelayMs > 0) {
             try {
                 Thread.sleep(getFlightInfoDelayMs);
