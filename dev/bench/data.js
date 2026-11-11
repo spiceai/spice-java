@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794298382155,
+  "lastUpdate": 1794384759260,
   "repoUrl": "https://github.com/spiceai/spice-java",
   "entries": {
     "spice-java in-process benchmarks": [
@@ -4278,6 +4278,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "sql() p50",
             "value": 1126,
+            "unit": "us"
+          },
+          {
+            "name": "param-root bytes per 100 binds",
+            "value": 3490,
+            "unit": "bytes"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Luke Kim",
+            "username": "lukekim",
+            "email": "80174+lukekim@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "71b8afd102efd91144a140981c12c88de939133e",
+          "message": "fix: timestamp parameters: overflow checks, honour timezone, java.time types, no leak on bind failure (#67)\n\n* fix: timestamp params: range checks, honour timezone, java.time types, no leak on bind failure\n\n* docs: timestamp parameter encoding rules\n\n* fix: address review: timestampTz naming (null-safe overloads), empty tz is naive, Arrow offset form for fixed zones\n\n* fix: null OffsetDateTime/ZonedDateTime binds typed NULL\n\n* fix: normalize fixed-offset zones in Param.timestamp, accept EST/MST/HST aliases",
+          "timestamp": "2026-11-07T22:14:14Z",
+          "url": "https://github.com/spiceai/spice-java/commit/71b8afd102efd91144a140981c12c88de939133e"
+        },
+        "date": 1794384758356,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "queryWithParams cached p50",
+            "value": 2543,
+            "unit": "us"
+          },
+          {
+            "name": "queryWithParams uncached p50",
+            "value": 2529,
+            "unit": "us"
+          },
+          {
+            "name": "sql() p50",
+            "value": 1140,
             "unit": "us"
           },
           {
