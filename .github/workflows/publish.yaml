@@ -16,13 +16,13 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.4.0
 
       # The GPG signing key is deliberately NOT imported here: it is imported
       # in a dedicated step immediately before publishing, after every piece
       # of downloaded third-party code has already run.
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v4.9.1
         with:
           distribution: oracle
           java-version: 17
