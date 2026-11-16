@@ -24,6 +24,7 @@ package ai.spice;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.ConnectException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -78,6 +79,7 @@ import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.DateMilliVector;
+import org.apache.arrow.vector.Decimal256Vector;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.DurationVector;
 import org.apache.arrow.vector.FieldVector;
@@ -1170,6 +1172,8 @@ public class SpiceClient implements AutoCloseable {
     private static final ArrowType INFER_TIMESTAMP_MICRO_UTC = new ArrowType.Timestamp(TimeUnit.MICROSECOND, "UTC");
     private static final ArrowType INFER_TIMESTAMP_MICRO_NAIVE = new ArrowType.Timestamp(TimeUnit.MICROSECOND, null);
     private static final ArrowType INFER_DURATION_MICRO = new ArrowType.Duration(TimeUnit.MICROSECOND);
+    private static final int MAX_DECIMAL128_PRECISION = 38;
+    private static final int MAX_DECIMAL256_PRECISION = 76;
 
     /**
      * Infers the Arrow type from a Java value.
@@ -1247,16 +1251,25 @@ public class SpiceClient implements AutoCloseable {
         // Decimal - must create new instance due to precision/scale
         if (value instanceof BigDecimal) {
             BigDecimal bd = (BigDecimal) value;
-            int precision = Math.max(bd.precision(), 1);
-            int scale = Math.max(bd.scale(), 0);
+            // A negative scale (1E+2, or any stripTrailingZeros() result) is
+            // bound as the same integer at scale 0, so the inferred type and
+            // the written value agree.
+            if (bd.scale() < 0) {
+                bd = bd.setScale(0);
+            }
+            int scale = bd.scale();
             // Ensure precision is at least scale + 1
-            precision = Math.max(precision, scale + 1);
-            // Cap at Decimal128 max precision
-            if (precision <= 38) {
+            int precision = Math.max(Math.max(bd.precision(), 1), scale + 1);
+            if (precision <= MAX_DECIMAL128_PRECISION) {
                 return new ArrowType.Decimal(precision, scale, 128);
-            } else {
+            }
+            if (precision <= MAX_DECIMAL256_PRECISION) {
                 return new ArrowType.Decimal(precision, scale, 256);
             }
+            throw new IllegalArgumentException(
+                    "Decimal parameter " + bd.toPlainString() + " needs precision " + precision
+                            + ", more than the " + MAX_DECIMAL256_PRECISION
+                            + " digits a decimal256 holds. Bind it as a string instead.");
         }
 
         throw new IllegalArgumentException(
@@ -1381,8 +1394,12 @@ public class SpiceClient implements AutoCloseable {
             // Decimal vector
             else if (vector instanceof DecimalVector) {
                 DecimalVector decVector = (DecimalVector) vector;
-                BigDecimal bd = (BigDecimal) value;
-                decVector.setSafe(index, bd);
+                decVector.setSafe(index,
+                        fitDecimal((BigDecimal) value, decVector.getPrecision(), decVector.getScale()));
+            } else if (vector instanceof Decimal256Vector) {
+                Decimal256Vector decVector = (Decimal256Vector) vector;
+                decVector.setSafe(index,
+                        fitDecimal((BigDecimal) value, decVector.getPrecision(), decVector.getScale()));
             } else {
                 throw new IllegalArgumentException("Unsupported vector type: " + vector.getClass().getName());
             }
@@ -1392,6 +1409,34 @@ public class SpiceClient implements AutoCloseable {
                             " to " + vector.getClass().getSimpleName(),
                     e);
         }
+    }
+
+    /**
+     * Rescales {@code value} to a decimal column's scale without rounding, so
+     * {@code Param.decimal128(new BigDecimal("1.5"), 10, 2)} binds 1.50 and
+     * {@code new BigDecimal("1E+2")} binds 100. Arrow requires the value's
+     * scale to equal the column's exactly.
+     *
+     * @throws IllegalArgumentException if the value has more fractional digits
+     *                                  than the scale, or more digits than the
+     *                                  precision
+     */
+    static BigDecimal fitDecimal(BigDecimal value, int precision, int scale) {
+        BigDecimal rescaled;
+        try {
+            rescaled = value.setScale(scale, RoundingMode.UNNECESSARY);
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(
+                    "Decimal parameter " + value.toPlainString() + " has more fractional digits than the scale "
+                            + scale + " of decimal(" + precision + ", " + scale + ")",
+                    e);
+        }
+        if (rescaled.precision() > precision) {
+            throw new IllegalArgumentException(
+                    "Decimal parameter " + value.toPlainString() + " does not fit decimal(" + precision + ", "
+                            + scale + "): it needs " + rescaled.precision() + " digits");
+        }
+        return rescaled;
     }
 
     /**

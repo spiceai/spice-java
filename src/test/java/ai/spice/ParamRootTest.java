@@ -26,6 +26,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
 import junit.framework.TestCase;
@@ -75,6 +76,67 @@ public class ParamRootTest extends TestCase {
             } catch (IllegalArgumentException expected) {
                 assertTrue(expected.getMessage().contains("Unsupported parameter type"));
             }
+        }
+    }
+    private static Object bindOne(Object param, ArrowType expectedType) throws Exception {
+        try (SpiceClient client = SpiceClient.builder().build();
+                VectorSchemaRoot root = client.createParameterRoot(param)) {
+            assertEquals(expectedType, root.getSchema().getFields().get(0).getType());
+            return root.getVector(0).getObject(0);
+        }
+    }
+
+    /** 1E+2 is the integer 100; stripTrailingZeros() produces values like it. */
+    public void testDecimalWithNegativeScaleBindsAsInteger() throws Exception {
+        assertEquals(new BigDecimal("100"),
+                bindOne(new BigDecimal("100").stripTrailingZeros(), new ArrowType.Decimal(3, 0, 128)));
+        assertEquals(new BigDecimal("1000"),
+                bindOne(new BigDecimal("1E+3"), new ArrowType.Decimal(4, 0, 128)));
+    }
+
+    /** Past 38 digits the inferred type is decimal256, which must also be writable. */
+    public void testDecimalPast38DigitsBindsAsDecimal256() throws Exception {
+        BigDecimal value = new BigDecimal("123456789012345678901234567890123456789.5");
+        assertEquals(value, bindOne(value, new ArrowType.Decimal(40, 1, 256)));
+    }
+
+    public void testDecimalPast76DigitsIsRejected() throws Exception {
+        BigDecimal value = new BigDecimal("1" + "0".repeat(76));
+        try {
+            bindOne(value, null);
+            fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("decimal256"));
+        }
+    }
+
+    public void testExplicitDecimal256Binds() throws Exception {
+        assertEquals(new BigDecimal("1.5"),
+                bindOne(Param.decimal256(new BigDecimal("1.5"), 50, 1), new ArrowType.Decimal(50, 1, 256)));
+    }
+
+    /** An explicit scale wider than the value's pads with zeros. */
+    public void testExplicitDecimalScaleIsPadded() throws Exception {
+        assertEquals(new BigDecimal("1.50"),
+                bindOne(Param.decimal128(new BigDecimal("1.5"), 10, 2), new ArrowType.Decimal(10, 2, 128)));
+    }
+
+    /** Narrowing the scale would round, so it is refused rather than done silently. */
+    public void testExplicitDecimalScaleNeverRounds() throws Exception {
+        try {
+            bindOne(Param.decimal128(new BigDecimal("1.25"), 10, 1), null);
+            fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("fractional digits"));
+        }
+    }
+
+    public void testExplicitDecimalPrecisionOverflowIsRejected() throws Exception {
+        try {
+            bindOne(Param.decimal128(new BigDecimal("12345"), 4, 0), null);
+            fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("does not fit decimal(4, 0)"));
         }
     }
 }
