@@ -182,9 +182,9 @@ public class SpiceClientBuilderTest extends TestCase {
         // public constructors and for a builder whose default address comes from
         // SPICE_FLIGHT_URL (withFlightAddress is never called on that path).
         for (String address : new String[] { "grpcs://localhost:443", "grpc+ssl://localhost:443" }) {
-            try (SpiceClient client = new SpiceClient(null, null, new URI(address),
+            try (SpiceClient ignored = new SpiceClient(null, null, new URI(address),
                     new URI("http://localhost:8090"), 0, null, 64)) {
-                fail("Constructor should reject flight address " + address + ", built " + client);
+                fail("Constructor should reject flight address " + address + ", but construction succeeded");
             } catch (IllegalArgumentException e) {
                 assertTrue(address + ": " + e.getMessage(), e.getMessage().contains("scheme"));
             }
