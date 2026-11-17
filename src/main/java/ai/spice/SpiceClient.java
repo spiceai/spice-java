@@ -27,6 +27,7 @@ import java.math.BigDecimal;
 import java.net.ConnectException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -46,6 +47,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -150,6 +152,9 @@ public class SpiceClient implements AutoCloseable {
     // Cap for large dataset results and metadata (~2 GiB, max safe signed-int value)
     private static final int MAX_INBOUND_MESSAGE_SIZE = Integer.MAX_VALUE;
     private static final int MAX_INBOUND_METADATA_SIZE = Integer.MAX_VALUE;
+
+    private static final String SUPPORTED_FLIGHT_SCHEMES =
+            "use https or grpc+tls for TLS, or http, grpc or grpc+tcp for plaintext";
 
     /** Default number of gRPC channels (HTTP/2 connections) per client. */
     static final int DEFAULT_CHANNEL_COUNT = 1;
@@ -288,15 +293,9 @@ public class SpiceClient implements AutoCloseable {
         this.queryTimeout = queryTimeout;
         this.statementCache = new PreparedStatementCache(statementCacheSize);
 
-        // Arrow Flight requires URI to be grpc protocol, convert http/https for
-        // convinience
-        if (flightAddress.getScheme().equals("https")) {
-            this.flightAddress = URI.create("grpc+tls://" + flightAddress.getHost() + ":" + flightAddress.getPort());
-        } else if (flightAddress.getScheme().equals("http")) {
-            this.flightAddress = URI.create("grpc+tcp://" + flightAddress.getHost() + ":" + flightAddress.getPort());
-        } else {
-            this.flightAddress = flightAddress;
-        }
+        // Arrow Flight requires URI to be grpc protocol; http/https are accepted for
+        // convenience. Unsupported schemes are rejected rather than dialled in plaintext.
+        this.flightAddress = normalizeFlightAddress(flightAddress);
 
         // Convert megabytes to bytes for RootAllocator:
         // https://arrow.apache.org/java/main/reference/org.apache.arrow.memory.core/org/apache/arrow/memory/RootAllocator.html
@@ -499,6 +498,59 @@ public class SpiceClient implements AutoCloseable {
      */
     private boolean usesHandshakeAuth() {
         return !Strings.isNullOrEmpty(apiKey) && !Strings.isNullOrEmpty(appId);
+    }
+
+    /**
+     * Maps a configured Flight address onto the {@code grpc+tls} or
+     * {@code grpc+tcp} scheme that {@code buildFlightChannel()} dials.
+     *
+     * <p>
+     * URI schemes are case-insensitive (RFC 3986), so {@code HTTPS://} selects
+     * TLS exactly as {@code https://} does. A scheme that is neither explicitly
+     * TLS nor explicitly plaintext is rejected: falling back to plaintext would
+     * send the API key and query traffic unencrypted to an address the caller
+     * may have meant to secure (e.g. {@code grpcs://}).
+     *
+     * @param address the configured Flight address
+     * @return the address with a canonical {@code grpc+tls} or {@code grpc+tcp}
+     *         scheme and the original host and port
+     * @throws IllegalArgumentException if the scheme is unsupported or the
+     *                                  address has no host
+     */
+    static URI normalizeFlightAddress(URI address) {
+        if (address == null) {
+            throw new IllegalArgumentException("flightAddress can't be null");
+        }
+        String scheme = address.getScheme();
+        if (scheme == null) {
+            throw new IllegalArgumentException("Flight address has no scheme; " + SUPPORTED_FLIGHT_SCHEMES);
+        }
+        String canonicalScheme;
+        switch (scheme.toLowerCase(Locale.ROOT)) {
+            case "https":
+            case "grpc+tls":
+                canonicalScheme = "grpc+tls";
+                break;
+            case "http":
+            case "grpc":
+            case "grpc+tcp":
+                canonicalScheme = "grpc+tcp";
+                break;
+            default:
+                throw new IllegalArgumentException(
+                        "Unsupported Flight address scheme \"" + scheme + "\"; " + SUPPORTED_FLIGHT_SCHEMES);
+        }
+        // getHost() is null when the authority is not a valid server address
+        // (e.g. a host name containing '_'); dialling it would target "null".
+        String host = address.getHost();
+        if (Strings.isNullOrEmpty(host)) {
+            throw new IllegalArgumentException("Flight address must include a valid host name");
+        }
+        try {
+            return new URI(canonicalScheme, null, host, address.getPort(), null, null, null);
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException("Invalid Flight address: " + e.getMessage(), e);
+        }
     }
 
     private FlightChannel buildFlightChannel() {
@@ -1759,11 +1811,15 @@ public class SpiceClient implements AutoCloseable {
         if (Strings.isNullOrEmpty(dataset)) {
             throw new IllegalArgumentException("No dataset name provided");
         }
+        // dataset is caller input placed in the request path: encode it as exactly
+        // one segment so it cannot redirect this authenticated request elsewhere.
+        String datasetSegment = encodePathSegment(dataset);
 
         logger.debug("Refreshing dataset: {}", dataset);
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .uri(new URI(String.format("%s/v1/datasets/%s/acceleration/refresh", this.httpAddress, dataset)))
+                    .uri(new URI(String.format("%s/v1/datasets/%s/acceleration/refresh", this.httpAddress,
+                            datasetSegment)))
                     .timeout(HTTP_REQUEST_TIMEOUT)
                     .header("Content-Type", "application/json")
                     .header("X-Spice-User-Agent", Config.getUserAgent());
@@ -2242,6 +2298,24 @@ public class SpiceClient implements AutoCloseable {
             out.write(resultBody, 0, resultBody.length);
         }
         return out.toByteArray();
+    }
+
+    /**
+     * Percent-encodes caller input for use as exactly one URL path segment, so
+     * it cannot add segments ({@code /}), end the path ({@code ?}, {@code #}),
+     * or step to another route ({@code .}, {@code ..}).
+     *
+     * @param segment the raw segment value
+     * @return the encoded segment
+     * @throws IllegalArgumentException if segment is {@code .} or {@code ..}
+     */
+    static String encodePathSegment(String segment) {
+        if (".".equals(segment) || "..".equals(segment)) {
+            throw new IllegalArgumentException("\"" + segment + "\" is not a valid name");
+        }
+        // URLEncoder targets form bodies, where a space becomes "+"; a path needs
+        // %20. A literal "+" is already encoded as %2B, so only spaces change here.
+        return URLEncoder.encode(segment, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     /**

@@ -128,6 +128,75 @@ public class SpiceClientBuilderTest extends TestCase {
         }
     }
 
+    public void testFlightTlsSchemeIsCaseInsensitive() throws Exception {
+        // RFC 3986 schemes are case-insensitive: an upper-case TLS scheme must
+        // still select TLS, never fall back to plaintext.
+        for (String address : new String[] { "HTTPS://localhost:443", "Https://localhost:443",
+                "GRPC+TLS://localhost:443", "grpc+tls://localhost:443" }) {
+            URI normalized = SpiceClient.normalizeFlightAddress(new URI(address));
+            assertEquals(address, "grpc+tls", normalized.getScheme());
+            assertEquals(address, "localhost", normalized.getHost());
+            assertEquals(address, 443, normalized.getPort());
+        }
+    }
+
+    public void testFlightPlaintextSchemesNormalizeToGrpcTcp() throws Exception {
+        for (String address : new String[] { "http://localhost:50051", "HTTP://localhost:50051",
+                "grpc://localhost:50051", "grpc+tcp://localhost:50051", "GRPC+TCP://localhost:50051" }) {
+            URI normalized = SpiceClient.normalizeFlightAddress(new URI(address));
+            assertEquals(address, "grpc+tcp", normalized.getScheme());
+            assertEquals(address, "localhost", normalized.getHost());
+            assertEquals(address, 50051, normalized.getPort());
+        }
+    }
+
+    public void testHttpsFlightAddressWithoutPortKeepsHost() throws Exception {
+        URI normalized = SpiceClient.normalizeFlightAddress(new URI("https://flight.spiceai.io"));
+        assertEquals("grpc+tls", normalized.getScheme());
+        assertEquals("flight.spiceai.io", normalized.getHost());
+        assertEquals("No port: the channel defaults to 443", -1, normalized.getPort());
+    }
+
+    public void testIpv6FlightAddress() throws Exception {
+        URI normalized = SpiceClient.normalizeFlightAddress(new URI("grpc+tls://[::1]:50051"));
+        assertEquals("grpc+tls", normalized.getScheme());
+        assertEquals("[::1]", normalized.getHost());
+        assertEquals(50051, normalized.getPort());
+    }
+
+    public void testUnsupportedFlightSchemeIsRejected() throws Exception {
+        // These used to connect in plaintext without any error.
+        for (String address : new String[] { "grpcs://localhost:443", "grpc+ssl://localhost:443",
+                "ftp://localhost:21", "localhost:50051" }) {
+            try {
+                SpiceClient.builder().withFlightAddress(new URI(address));
+                fail("Should reject flight address " + address);
+            } catch (IllegalArgumentException e) {
+                assertTrue(address + ": " + e.getMessage(), e.getMessage().contains("scheme"));
+            }
+        }
+    }
+
+    public void testFlightAddressWithoutHostIsRejected() throws Exception {
+        // '_' is not legal in a URI host name, so java.net.URI reports no host.
+        for (String address : new String[] { "grpc+tls:///path", "http://spice_runtime:50051" }) {
+            try {
+                SpiceClient.builder().withFlightAddress(new URI(address));
+                fail("Should reject flight address " + address);
+            } catch (IllegalArgumentException e) {
+                assertTrue(address + ": " + e.getMessage(), e.getMessage().contains("host"));
+            }
+        }
+    }
+
+    public void testUpperCaseHttpsFlightAddressBuilds() throws Exception {
+        SpiceClient client = SpiceClient.builder()
+                .withFlightAddress(new URI("HTTPS://localhost:443"))
+                .build();
+        assertNotNull("Client should be created with an upper-case https address", client);
+        client.close();
+    }
+
     // ==================== HTTP Address Tests ====================
 
     public void testWithHttpAddressUri() throws Exception {

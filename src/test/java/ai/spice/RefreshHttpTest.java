@@ -43,6 +43,8 @@ public class RefreshHttpTest extends TestCase {
     private HttpServer httpServer;
     private TestFlightSqlServer flightServer;
     private final AtomicReference<String> lastPath = new AtomicReference<>();
+    private final AtomicReference<String> lastRawPath = new AtomicReference<>();
+    private final AtomicReference<String> lastRawQuery = new AtomicReference<>();
     private final AtomicReference<String> lastBody = new AtomicReference<>();
     private final AtomicReference<String> lastUserAgentHeader = new AtomicReference<>();
     private final AtomicReference<String> lastApiKeyHeader = new AtomicReference<>();
@@ -68,6 +70,8 @@ public class RefreshHttpTest extends TestCase {
 
     private void handle(HttpExchange exchange) throws IOException {
         lastPath.set(exchange.getRequestURI().getPath());
+        lastRawPath.set(exchange.getRequestURI().getRawPath());
+        lastRawQuery.set(exchange.getRequestURI().getRawQuery());
         lastUserAgentHeader.set(exchange.getRequestHeaders().getFirst("X-Spice-User-Agent"));
         lastApiKeyHeader.set(exchange.getRequestHeaders().getFirst("X-API-Key"));
         try (InputStream body = exchange.getRequestBody()) {
@@ -129,6 +133,45 @@ public class RefreshHttpTest extends TestCase {
             fail("Expected ExecutionException");
         } catch (ExecutionException e) {
             assertTrue(e.getMessage().contains("500"));
+        }
+    }
+
+    public void testRefreshDatasetKeepsQualifiedName() throws Exception {
+        try (SpiceClient client = newClient()) {
+            client.refreshDataset("spice.public.taxi_trips");
+            assertEquals("/v1/datasets/spice.public.taxi_trips/acceleration/refresh", lastRawPath.get());
+        }
+    }
+
+    public void testRefreshDatasetEncodesNameAsOnePathSegment() throws Exception {
+        // A name carrying '/', '?' or '#' must stay inside the dataset segment
+        // instead of steering the authenticated request to another route.
+        try (SpiceClient client = newClient()) {
+            client.refreshDataset("../../status?x=1#");
+            assertEquals("/v1/datasets/..%2F..%2Fstatus%3Fx%3D1%23/acceleration/refresh", lastRawPath.get());
+            assertNull("Name must not start a query string", lastRawQuery.get());
+        }
+    }
+
+    public void testRefreshDatasetEncodesSpaceAndPlus() throws Exception {
+        try (SpiceClient client = newClient()) {
+            client.refreshDataset("my data+set");
+            assertEquals("/v1/datasets/my%20data%2Bset/acceleration/refresh", lastRawPath.get());
+            assertEquals("/v1/datasets/my data+set/acceleration/refresh", lastPath.get());
+        }
+    }
+
+    public void testRefreshDatasetRejectsDotSegments() throws Exception {
+        try (SpiceClient client = newClient()) {
+            for (String name : new String[] { ".", ".." }) {
+                try {
+                    client.refreshDataset(name);
+                    fail("Expected IllegalArgumentException for " + name);
+                } catch (IllegalArgumentException expected) {
+                    // expected
+                }
+            }
+            assertNull("No request should be sent", lastPath.get());
         }
     }
 

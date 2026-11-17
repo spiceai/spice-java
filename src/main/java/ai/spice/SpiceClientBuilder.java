@@ -65,13 +65,17 @@ public class SpiceClientBuilder {
     /**
      * Sets the client's flight address
      * 
-     * @param flightAddress The URI of the flight address
+     * @param flightAddress The URI of the flight address. {@code https} or
+     *                      {@code grpc+tls} connects with TLS; {@code http},
+     *                      {@code grpc} or {@code grpc+tcp} connects in plaintext.
+     *                      Schemes are case-insensitive.
      * @return The current instance of SpiceClientBuilder for method chaining.
+     * @throws IllegalArgumentException if flightAddress is null, has no host, or
+     *                                  uses any other scheme
      */
     public SpiceClientBuilder withFlightAddress(URI flightAddress) {
-        if (flightAddress == null) {
-            throw new IllegalArgumentException("flightAddress can't be null");
-        }
+        // Fail at the call site rather than at build(); the client re-checks.
+        SpiceClient.normalizeFlightAddress(flightAddress);
         this.flightAddress = flightAddress;
         return this;
     }
