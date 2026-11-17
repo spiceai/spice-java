@@ -27,6 +27,9 @@ import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -43,6 +46,8 @@ public class RefreshHttpTest extends TestCase {
     private HttpServer httpServer;
     private TestFlightSqlServer flightServer;
     private final AtomicReference<String> lastPath = new AtomicReference<>();
+    private final AtomicReference<String> lastRawPath = new AtomicReference<>();
+    private final AtomicReference<String> lastRawQuery = new AtomicReference<>();
     private final AtomicReference<String> lastBody = new AtomicReference<>();
     private final AtomicReference<String> lastUserAgentHeader = new AtomicReference<>();
     private final AtomicReference<String> lastApiKeyHeader = new AtomicReference<>();
@@ -68,6 +73,8 @@ public class RefreshHttpTest extends TestCase {
 
     private void handle(HttpExchange exchange) throws IOException {
         lastPath.set(exchange.getRequestURI().getPath());
+        lastRawPath.set(exchange.getRequestURI().getRawPath());
+        lastRawQuery.set(exchange.getRequestURI().getRawQuery());
         lastUserAgentHeader.set(exchange.getRequestHeaders().getFirst("X-Spice-User-Agent"));
         lastApiKeyHeader.set(exchange.getRequestHeaders().getFirst("X-API-Key"));
         try (InputStream body = exchange.getRequestBody()) {
@@ -129,6 +136,89 @@ public class RefreshHttpTest extends TestCase {
             fail("Expected ExecutionException");
         } catch (ExecutionException e) {
             assertTrue(e.getMessage().contains("500"));
+        }
+    }
+
+    public void testRefreshDatasetKeepsQualifiedName() throws Exception {
+        try (SpiceClient client = newClient()) {
+            client.refreshDataset("spice.public.taxi_trips");
+            assertEquals("/v1/datasets/spice.public.taxi_trips/acceleration/refresh", lastRawPath.get());
+        }
+    }
+
+    public void testRefreshDatasetEncodesNameAsOnePathSegment() throws Exception {
+        // A name carrying '?' or '#' must stay inside the dataset segment
+        // instead of ending the path early.
+        try (SpiceClient client = newClient()) {
+            client.refreshDataset("status?x=1#");
+            assertEquals("/v1/datasets/status%3Fx%3D1%23/acceleration/refresh", lastRawPath.get());
+            assertNull("Name must not start a query string", lastRawQuery.get());
+        }
+    }
+
+    public void testRefreshDatasetRejectsPathSeparators() throws Exception {
+        // Encoding a separator is not enough: a server or proxy that decodes the
+        // path before routing (this JDK test server picks its handler from the
+        // decoded path) turns "orders%2Fcdc" back into "orders/cdc" and sends
+        // the authenticated POST to another route, here the CDC write endpoint.
+        // '%' is rejected too, so a second decode cannot produce a separator.
+        AtomicReference<String> cdcRawPath = new AtomicReference<>();
+        httpServer.createContext("/v1/datasets/orders/cdc", exchange -> {
+            cdcRawPath.set(exchange.getRequestURI().getRawPath());
+            exchange.sendResponseHeaders(201, -1);
+            exchange.close();
+        });
+        List<String> accepted = new ArrayList<>();
+        try (SpiceClient client = newClient()) {
+            for (String name : new String[] { "orders/cdc", "orders\\cdc", "orders%2Fcdc" }) {
+                try {
+                    client.refreshDataset(name);
+                    accepted.add(name);
+                } catch (IllegalArgumentException expected) {
+                    // expected
+                }
+            }
+        }
+        assertNull("A dataset name reached another route: " + cdcRawPath.get(), cdcRawPath.get());
+        assertEquals("Names with separators or '%' must be rejected", Collections.emptyList(), accepted);
+        assertNull("No request should be sent", lastPath.get());
+    }
+
+    public void testRefreshDatasetEncodesSpaceAndPlus() throws Exception {
+        try (SpiceClient client = newClient()) {
+            client.refreshDataset("my data+set");
+            assertEquals("/v1/datasets/my%20data%2Bset/acceleration/refresh", lastRawPath.get());
+            assertEquals("/v1/datasets/my data+set/acceleration/refresh", lastPath.get());
+        }
+    }
+
+    public void testRefreshDatasetRejectsUnpairedSurrogate() throws Exception {
+        // UTF-8 cannot encode an unpaired surrogate; URLEncoder would silently
+        // substitute '?', refreshing "orders_?" instead of rejecting the name.
+        try (SpiceClient client = newClient()) {
+            for (String name : new String[] { "orders_\uD800", "orders_\uDC00x" }) {
+                try {
+                    client.refreshDataset(name);
+                    fail("Expected IllegalArgumentException, but sent " + lastRawPath.get());
+                } catch (IllegalArgumentException expected) {
+                    // expected
+                }
+            }
+            assertNull("No request should be sent", lastPath.get());
+        }
+    }
+
+    public void testRefreshDatasetRejectsDotSegments() throws Exception {
+        try (SpiceClient client = newClient()) {
+            for (String name : new String[] { ".", ".." }) {
+                try {
+                    client.refreshDataset(name);
+                    fail("Expected IllegalArgumentException for " + name);
+                } catch (IllegalArgumentException expected) {
+                    // expected
+                }
+            }
+            assertNull("No request should be sent", lastPath.get());
         }
     }
 

@@ -1,15 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
     <!--
-        CVE-2026-25087: Affects Apache Arrow <= 19.0.0.
-        No upstream fix is available yet (19.0.0 is the latest release).
-        Suppress until Arrow ships a patched version, then remove this entry.
+        CVE-2026-25087 is a use-after-free in the Apache Arrow C++ IPC file
+        reader when pre-buffering is enabled (Arrow C++ 15.0.0 through 23.0.0,
+        fixed in 23.0.1): https://seclists.org/oss-sec/2026/q1/170
+        It does not affect Arrow Java. The Arrow Java artifacts this SDK uses
+        (vector, memory, format, flight-core, flight-sql) are pure Java and do
+        not contain the C++ IPC reader; dependency-check matches them only
+        because the CVE's CPE names the whole "apache:arrow" project.
+        Arrow Java will never ship a "fix", so do not wait for one. Keep this
+        suppression, scoped to Arrow Java artifacts, unless the advisory is
+        amended to cover Java.
     -->
     <suppress>
         <notes><![CDATA[
-            CVE-2026-25087 in Apache Arrow. No fix available as of Arrow 19.0.0.
-            Tracked for removal when Arrow publishes a patched release.
+            False positive: CVE-2026-25087 affects Arrow C++ (IPC file reading
+            with pre-buffering, fixed in C++ 23.0.1), not Arrow Java.
         ]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.apache\.arrow/.*$</packageUrl>
         <cve>CVE-2026-25087</cve>
     </suppress>
 </suppressions>
