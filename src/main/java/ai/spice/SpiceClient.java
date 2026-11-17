@@ -1806,6 +1806,9 @@ public class SpiceClient implements AutoCloseable {
      * @param dataset        the name of the dataset to refresh
      * @param refreshOptions the refresh options to use when refreshing the dataset
      * @throws ExecutionException if there is an error refreshing the dataset
+     * @throws IllegalArgumentException if dataset is empty, {@code .} or
+     *                                  {@code ..}, or contains {@code /},
+     *                                  {@code \} or {@code %}
      */
     public void refreshDataset(String dataset, RefreshOptions refreshOptions) throws ExecutionException {
         if (Strings.isNullOrEmpty(dataset)) {
@@ -2302,16 +2305,27 @@ public class SpiceClient implements AutoCloseable {
 
     /**
      * Percent-encodes caller input for use as exactly one URL path segment, so
-     * it cannot add segments ({@code /}), end the path ({@code ?}, {@code #}),
-     * or step to another route ({@code .}, {@code ..}).
+     * it cannot add segments, end the path ({@code ?}, {@code #}), or step to
+     * another route ({@code .}, {@code ..}).
+     *
+     * <p>
+     * Separators are rejected rather than encoded: a server or proxy that
+     * decodes the path before routing turns {@code %2F} back into {@code /}.
+     * {@code %} is rejected too, so a second decode cannot produce one.
      *
      * @param segment the raw segment value
      * @return the encoded segment
-     * @throws IllegalArgumentException if segment is {@code .} or {@code ..}
+     * @throws IllegalArgumentException if segment is {@code .} or {@code ..},
+     *                                  or contains {@code /}, {@code \} or
+     *                                  {@code %}
      */
     static String encodePathSegment(String segment) {
         if (".".equals(segment) || "..".equals(segment)) {
             throw new IllegalArgumentException("\"" + segment + "\" is not a valid name");
+        }
+        if (segment.indexOf('/') >= 0 || segment.indexOf('\\') >= 0 || segment.indexOf('%') >= 0) {
+            throw new IllegalArgumentException(
+                    "\"" + segment + "\" is not a valid name: '/', '\\' and '%' are not allowed");
         }
         // URLEncoder targets form bodies, where a space becomes "+"; a path needs
         // %20. A literal "+" is already encoded as %2B, so only spaces change here.

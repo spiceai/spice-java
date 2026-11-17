@@ -81,6 +81,25 @@ public class MtlsTest extends TestCase {
         }
     }
 
+    /**
+     * URI schemes are case-insensitive: an upper-case TLS scheme must complete a
+     * TLS handshake. The server accepts only TLS, so a client that dialled these
+     * addresses in plaintext (as releases up to 0.8.1 did) fails here.
+     */
+    public void testUpperCaseTlsSchemesUseTls() throws Exception {
+        try (TestFlightSqlServer server = new TestFlightSqlServer(certs, false)) {
+            for (String scheme : new String[] { "HTTPS", "GRPC+TLS", "Grpc+Tls" }) {
+                try (SpiceClient client = SpiceClient.builder()
+                        .withFlightAddress(new URI(scheme + "://127.0.0.1:" + server.getPort()))
+                        .withMaxRetries(0)
+                        .withTlsRootCertFile(certs.caCert.toString())
+                        .build()) {
+                    assertQueriesWork(client, server);
+                }
+            }
+        }
+    }
+
     /** Full mutual TLS: server verifies the client certificate. */
     public void testMutualTls() throws Exception {
         try (TestFlightSqlServer server = new TestFlightSqlServer(certs, true);

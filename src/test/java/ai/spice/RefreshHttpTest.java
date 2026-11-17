@@ -27,6 +27,9 @@ import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -144,13 +147,41 @@ public class RefreshHttpTest extends TestCase {
     }
 
     public void testRefreshDatasetEncodesNameAsOnePathSegment() throws Exception {
-        // A name carrying '/', '?' or '#' must stay inside the dataset segment
-        // instead of steering the authenticated request to another route.
+        // A name carrying '?' or '#' must stay inside the dataset segment
+        // instead of ending the path early.
         try (SpiceClient client = newClient()) {
-            client.refreshDataset("../../status?x=1#");
-            assertEquals("/v1/datasets/..%2F..%2Fstatus%3Fx%3D1%23/acceleration/refresh", lastRawPath.get());
+            client.refreshDataset("status?x=1#");
+            assertEquals("/v1/datasets/status%3Fx%3D1%23/acceleration/refresh", lastRawPath.get());
             assertNull("Name must not start a query string", lastRawQuery.get());
         }
+    }
+
+    public void testRefreshDatasetRejectsPathSeparators() throws Exception {
+        // Encoding a separator is not enough: a server or proxy that decodes the
+        // path before routing (this JDK test server picks its handler from the
+        // decoded path) turns "orders%2Fcdc" back into "orders/cdc" and sends
+        // the authenticated POST to another route, here the CDC write endpoint.
+        // '%' is rejected too, so a second decode cannot produce a separator.
+        AtomicReference<String> cdcRawPath = new AtomicReference<>();
+        httpServer.createContext("/v1/datasets/orders/cdc", exchange -> {
+            cdcRawPath.set(exchange.getRequestURI().getRawPath());
+            exchange.sendResponseHeaders(201, -1);
+            exchange.close();
+        });
+        List<String> accepted = new ArrayList<>();
+        try (SpiceClient client = newClient()) {
+            for (String name : new String[] { "orders/cdc", "orders\\cdc", "orders%2Fcdc" }) {
+                try {
+                    client.refreshDataset(name);
+                    accepted.add(name);
+                } catch (IllegalArgumentException expected) {
+                    // expected
+                }
+            }
+        }
+        assertNull("A dataset name reached another route: " + cdcRawPath.get(), cdcRawPath.get());
+        assertEquals("Names with separators or '%' must be rejected", Collections.emptyList(), accepted);
+        assertNull("No request should be sent", lastPath.get());
     }
 
     public void testRefreshDatasetEncodesSpaceAndPlus() throws Exception {

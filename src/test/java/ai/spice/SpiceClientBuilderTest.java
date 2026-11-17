@@ -189,13 +189,8 @@ public class SpiceClientBuilderTest extends TestCase {
         }
     }
 
-    public void testUpperCaseHttpsFlightAddressBuilds() throws Exception {
-        SpiceClient client = SpiceClient.builder()
-                .withFlightAddress(new URI("HTTPS://localhost:443"))
-                .build();
-        assertNotNull("Client should be created with an upper-case https address", client);
-        client.close();
-    }
+    // MtlsTest.testUpperCaseTlsSchemesUseTls runs queries over upper-case TLS
+    // schemes against a TLS-only server, which proves the transport.
 
     // ==================== HTTP Address Tests ====================
 
