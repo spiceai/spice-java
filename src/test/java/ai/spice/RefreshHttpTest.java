@@ -192,6 +192,22 @@ public class RefreshHttpTest extends TestCase {
         }
     }
 
+    public void testRefreshDatasetRejectsUnpairedSurrogate() throws Exception {
+        // UTF-8 cannot encode an unpaired surrogate; URLEncoder would silently
+        // substitute '?', refreshing "orders_?" instead of rejecting the name.
+        try (SpiceClient client = newClient()) {
+            for (String name : new String[] { "orders_\uD800", "orders_\uDC00x" }) {
+                try {
+                    client.refreshDataset(name);
+                    fail("Expected IllegalArgumentException, but sent " + lastRawPath.get());
+                } catch (IllegalArgumentException expected) {
+                    // expected
+                }
+            }
+            assertNull("No request should be sent", lastPath.get());
+        }
+    }
+
     public void testRefreshDatasetRejectsDotSegments() throws Exception {
         try (SpiceClient client = newClient()) {
             for (String name : new String[] { ".", ".." }) {

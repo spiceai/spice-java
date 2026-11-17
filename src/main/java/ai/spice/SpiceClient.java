@@ -1807,8 +1807,9 @@ public class SpiceClient implements AutoCloseable {
      * @param refreshOptions the refresh options to use when refreshing the dataset
      * @throws ExecutionException if there is an error refreshing the dataset
      * @throws IllegalArgumentException if dataset is empty, {@code .} or
-     *                                  {@code ..}, or contains {@code /},
-     *                                  {@code \} or {@code %}
+     *                                  {@code ..}, contains {@code /},
+     *                                  {@code \} or {@code %}, or is not
+     *                                  valid Unicode
      */
     public void refreshDataset(String dataset, RefreshOptions refreshOptions) throws ExecutionException {
         if (Strings.isNullOrEmpty(dataset)) {
@@ -2316,8 +2317,8 @@ public class SpiceClient implements AutoCloseable {
      * @param segment the raw segment value
      * @return the encoded segment
      * @throws IllegalArgumentException if segment is {@code .} or {@code ..},
-     *                                  or contains {@code /}, {@code \} or
-     *                                  {@code %}
+     *                                  contains {@code /}, {@code \} or
+     *                                  {@code %}, or is not valid Unicode
      */
     static String encodePathSegment(String segment) {
         if (".".equals(segment) || "..".equals(segment)) {
@@ -2326,6 +2327,11 @@ public class SpiceClient implements AutoCloseable {
         if (segment.indexOf('/') >= 0 || segment.indexOf('\\') >= 0 || segment.indexOf('%') >= 0) {
             throw new IllegalArgumentException(
                     "\"" + segment + "\" is not a valid name: '/', '\\' and '%' are not allowed");
+        }
+        // An unpaired surrogate has no UTF-8 encoding, and URLEncoder would silently
+        // send '?' in its place, naming a different dataset.
+        if (!StandardCharsets.UTF_8.newEncoder().canEncode(segment)) {
+            throw new IllegalArgumentException("Name is not valid Unicode (it contains an unpaired surrogate)");
         }
         // URLEncoder targets form bodies, where a space becomes "+"; a path needs
         // %20. A literal "+" is already encoded as %2B, so only spaces change here.
