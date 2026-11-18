@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794903147720,
+  "lastUpdate": 1794989562004,
   "repoUrl": "https://github.com/spiceai/spice-java",
   "entries": {
     "spice-java in-process benchmarks": [
@@ -4572,6 +4572,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "sql() p50",
             "value": 1076,
+            "unit": "us"
+          },
+          {
+            "name": "param-root bytes per 100 binds",
+            "value": 3490,
+            "unit": "bytes"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Luke Kim",
+            "username": "lukekim",
+            "email": "80174+lukekim@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "f6a59b3bb32c5bb2e211f22f8849a0d058cbb459",
+          "message": "fix: fail closed on unrecognised Flight schemes and encode refreshDataset names (#71)\n\n* fix: fail closed on unrecognised Flight schemes and encode refreshDataset names\n\nFlight TLS was selected only for the exact lower-case schemes \"https\" and\n\"grpc+tls\"; every other scheme (HTTPS://, GRPC+TLS://, grpcs://, ...) was\nsilently dialled in plaintext, sending the API key and queries unencrypted,\nwhile HTTP calls to the same HTTPS:// address still used TLS. Schemes are now\nmatched case-insensitively against an allowlist and anything else is rejected\nwith IllegalArgumentException. An https address without a port now keeps its\nhost (it previously resolved to \"null\"), and an address without a valid host\nis rejected.\n\nrefreshDataset spliced the dataset name into the request path unescaped, so a\nname containing '/', '?', '#' or '..' could steer the authenticated POST to\nanother route. The name is now percent-encoded as a single path segment, and\n\".\" and \"..\" are rejected, matching the guard on cancelActiveQuery.\n\nAlso corrects the OWASP suppression note for CVE-2026-25087: it is an Arrow\nC++ bug (fixed in C++ 23.0.1), a false positive for Arrow Java, and the\nsuppression is now scoped to org.apache.arrow Maven artifacts.\n\n* fix: reject separators in refreshDataset names; prove upper-case TLS schemes handshake\n\nPercent-encoding '/' is not enough: a server or proxy that decodes the path\nbefore routing turns \"orders%2Fcdc\" back into \"orders/cdc\" and sends the\nauthenticated POST to another write route (/v1/datasets/{name}/cdc). Dataset\nnames containing '/', '\\' or '%' are now rejected before any request; '%' so a\nsecond decode cannot produce a separator either.\n\nReplace the builder-only upper-case scheme test with MtlsTest\ntestUpperCaseTlsSchemesUseTls, which runs queries over HTTPS://, GRPC+TLS://\nand Grpc+Tls:// against a TLS-only server, so a plaintext fallback fails it.\n\n* fix: reject refreshDataset names with unpaired surrogates; test the constructor's scheme check\n\nURLEncoder replaces an unpaired UTF-16 surrogate with '?', so \"orders_\\uD800\"\nwas sent as \"orders_%3F\" and refreshed a different dataset. Names that UTF-8\ncannot encode are now rejected before any request.\n\nAdd a direct-constructor test for unsupported Flight schemes: the constructor's\ncheck is the only one on the public constructors and on a builder whose default\naddress comes from SPICE_FLIGHT_URL.\n\n* test: don't print SpiceClient's default toString() in a failure message",
+          "timestamp": "2026-11-17T20:20:58Z",
+          "url": "https://github.com/spiceai/spice-java/commit/f6a59b3bb32c5bb2e211f22f8849a0d058cbb459"
+        },
+        "date": 1794989561341,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "queryWithParams cached p50",
+            "value": 1721,
+            "unit": "us"
+          },
+          {
+            "name": "queryWithParams uncached p50",
+            "value": 1726,
+            "unit": "us"
+          },
+          {
+            "name": "sql() p50",
+            "value": 643,
             "unit": "us"
           },
           {
