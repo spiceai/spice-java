@@ -110,6 +110,25 @@ public class ParamRootTest extends TestCase {
         }
     }
 
+    /** A compact huge exponent is rejected by its digit count, without expanding it. */
+    public void testDecimalHugeExponentIsRejected() throws Exception {
+        try {
+            bindOne(new BigDecimal("1E+2147483647"), null);
+            fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("1E+2147483647"));
+        }
+    }
+
+    public void testExplicitDecimalHugeExponentIsRejected() throws Exception {
+        try {
+            bindOne(Param.decimal128(new BigDecimal("1E+100000000"), 38, 0), null);
+            fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("1E+100000000"));
+        }
+    }
+
     public void testExplicitDecimal256Binds() throws Exception {
         assertEquals(new BigDecimal("1.5"),
                 bindOne(Param.decimal256(new BigDecimal("1.5"), 50, 1), new ArrowType.Decimal(50, 1, 256)));

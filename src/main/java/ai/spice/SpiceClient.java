@@ -1254,20 +1254,20 @@ public class SpiceClient implements AutoCloseable {
             // A negative scale (1E+2, or any stripTrailingZeros() result) is
             // bound as the same integer at scale 0, so the inferred type and
             // the written value agree.
-            if (bd.scale() < 0) {
+            long scale = Math.max(bd.scale(), 0);
+            long digits = bd.signum() == 0 ? 1L : (long) bd.precision() - Math.min(bd.scale(), 0);
+            long precision = Math.max(digits, scale + 1);
+            if (precision <= MAX_DECIMAL256_PRECISION && bd.scale() < 0) {
                 bd = bd.setScale(0);
             }
-            int scale = bd.scale();
-            // Ensure precision is at least scale + 1
-            int precision = Math.max(Math.max(bd.precision(), 1), scale + 1);
             if (precision <= MAX_DECIMAL128_PRECISION) {
-                return new ArrowType.Decimal(precision, scale, 128);
+                return new ArrowType.Decimal((int) precision, (int) scale, 128);
             }
             if (precision <= MAX_DECIMAL256_PRECISION) {
-                return new ArrowType.Decimal(precision, scale, 256);
+                return new ArrowType.Decimal((int) precision, (int) scale, 256);
             }
             throw new IllegalArgumentException(
-                    "Decimal parameter " + bd.toPlainString() + " needs precision " + precision
+                    "Decimal parameter " + bd + " needs precision " + precision
                             + ", more than the " + MAX_DECIMAL256_PRECISION
                             + " digits a decimal256 holds. Bind it as a string instead.");
         }
@@ -1422,18 +1422,26 @@ public class SpiceClient implements AutoCloseable {
      *                                  precision
      */
     static BigDecimal fitDecimal(BigDecimal value, int precision, int scale) {
+        if (value.signum() != 0 && scale > value.scale()) {
+            long needed = (long) value.precision() - value.scale() + scale;
+            if (needed > precision) {
+                throw new IllegalArgumentException(
+                        "Decimal parameter " + value + " does not fit decimal(" + precision + ", "
+                                + scale + "): it needs " + needed + " digits");
+            }
+        }
         BigDecimal rescaled;
         try {
             rescaled = value.setScale(scale, RoundingMode.UNNECESSARY);
         } catch (ArithmeticException e) {
             throw new IllegalArgumentException(
-                    "Decimal parameter " + value.toPlainString() + " has more fractional digits than the scale "
+                    "Decimal parameter " + value + " has more fractional digits than the scale "
                             + scale + " of decimal(" + precision + ", " + scale + ")",
                     e);
         }
         if (rescaled.precision() > precision) {
             throw new IllegalArgumentException(
-                    "Decimal parameter " + value.toPlainString() + " does not fit decimal(" + precision + ", "
+                    "Decimal parameter " + value + " does not fit decimal(" + precision + ", "
                             + scale + "): it needs " + rescaled.precision() + " digits");
         }
         return rescaled;
