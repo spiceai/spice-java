@@ -258,7 +258,7 @@ Or use the generic constructors:
 - Boolean: `boolean`
 - Binary: `byte[]`
 - Temporal: `LocalDate`, `LocalTime`, `LocalDateTime`, `Duration`
-- Decimal: `BigDecimal`
+- Decimal: `BigDecimal`, as `decimal128` with the value's own precision and scale, or `decimal256` past 38 digits. A negative scale (`1E+2`) binds as the integer. With `decimal128` / `decimal256` the value is padded to the scale you give; a value that would need rounding or more digits than the precision is rejected with `IllegalArgumentException`.
 - Null: `null`
 
 ### Memory Configuration
