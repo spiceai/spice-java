@@ -1430,6 +1430,11 @@ public class SpiceClient implements AutoCloseable {
                                 + scale + "): it needs " + needed + " digits");
             }
         }
+        if (value.signum() != 0 && (long) value.scale() - scale >= value.precision()) {
+            throw new IllegalArgumentException(
+                    "Decimal parameter " + value + " has more fractional digits than the scale "
+                            + scale + " of decimal(" + precision + ", " + scale + ")");
+        }
         BigDecimal rescaled;
         try {
             rescaled = value.setScale(scale, RoundingMode.UNNECESSARY);
