@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795421670289,
+  "lastUpdate": 1795594380158,
   "repoUrl": "https://github.com/spiceai/spice-java",
   "entries": {
     "spice-java in-process benchmarks": [
@@ -4824,6 +4824,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "sql() p50",
             "value": 859,
+            "unit": "us"
+          },
+          {
+            "name": "param-root bytes per 100 binds",
+            "value": 3490,
+            "unit": "bytes"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Emma",
+            "username": "spiceemma",
+            "email": "98318442+spiceemma@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "9dcbf4bb8b5d79f4fae920b1516fb512d2e7a587",
+          "message": "fix: bind decimal256, negative-scale, and explicit-scale decimal parameters (#70)\n\n* fix: bind decimal256 parameters, negative-scale BigDecimals, and explicit decimal scales\n\nsqlWithParams threw for three kinds of decimal parameter before sending\nthe query:\n\n- Param.decimal256(...) and any inferred BigDecimal past 38 digits:\n  only DecimalVector was written, so Decimal256Vector fell through to\n  \"Unsupported vector type\".\n- A BigDecimal with a negative scale, such as 1E+2 or any\n  stripTrailingZeros() result: inference clamped the scale to 0 but the\n  value was written at -2, which Arrow rejects.\n- Param.decimal128/decimal256 with a scale wider than the value's\n  (1.5 at scale 2): Arrow requires the scales to match exactly.\n\nRescale each value to its column's scale without rounding, write\nDecimal256Vector, and reject values that would round or overflow the\nprecision (and inferred values past 76 digits) with an\nIllegalArgumentException naming the value and type.\n\n* fix: reject an oversized decimal parameter by its digit count, before rescaling it\n\nA compact value such as 1E+2147483647 made inference throw ArithmeticException,\nand an explicit Param.decimal128(1E+100000000, 38, 0) expanded a 100-million-digit\nvalue before the precision check. Both now compute the needed digits with long\narithmetic first, and the messages print the compact form of the value.\n\n* fix: refuse a decimal whose explicit scale drops more digits than it has, before rescaling\n\nParam.decimal128(1E-100000000, 38, 0) divided by a 100-million-digit power of ten\nbefore it reported the fractional digits. A nonzero value that loses at least\nas many digits as its precision cannot fit, so it is refused at once.\n\n---------\n\nCo-authored-by: Emma Spice <emma@EmmasMacStudio.localdomain>",
+          "timestamp": "2026-11-21T19:40:48Z",
+          "url": "https://github.com/spiceai/spice-java/commit/9dcbf4bb8b5d79f4fae920b1516fb512d2e7a587"
+        },
+        "date": 1795594378808,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "queryWithParams cached p50",
+            "value": 1886,
+            "unit": "us"
+          },
+          {
+            "name": "queryWithParams uncached p50",
+            "value": 1707,
+            "unit": "us"
+          },
+          {
+            "name": "sql() p50",
+            "value": 625,
             "unit": "us"
           },
           {
